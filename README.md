@@ -17,6 +17,14 @@ The plugin is a proper Python package (src-layout) installed by symlinking it in
 
 The plugin is symlinked into the target profile's plugin directory so the framework's plugin loader can find it. `pyproject.toml` adds `src/` to pytest's `pythonpath`, so the tests run directly from the source tree — no `pip install -e .` required.
 
+**Prerequisites:** the `tmux` binary and `pytest` must be available. The plugin's `check_fn` hides the tools when `tmux` isn't on PATH, and the test suite needs `pytest`. On Debian/Ubuntu:
+
+```bash
+apt install tmux python3-pytest
+```
+
+On macOS, `brew install tmux pytest`. In a venv, `pip install pytest`.
+
 ```bash
 # 1. Symlink into the target profile's plugin directory.
 ln -s ~/src/hermes-tmux ~/.hermes/profiles/<profile>/plugins/tmux
