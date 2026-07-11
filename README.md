@@ -2,20 +2,27 @@
 
 Tmux pane observability for [Hermes Agent](https://github.com/NousResearch/hermes-agent) — four tools that let the agent see what's running in tmux, send text/keys into panes, and wait for output to appear, with tmux's tricky flag combinations baked in as defaults so the model never has to remember them.
 
+The plugin is a proper Python package (src-layout, `pip install -e .`) and is exposed as `hermes_tmux` on the system Python. Tests are pytest-driven.
+
 ## Tools
 
 | Tool | What it does |
 |---|---|
 | `tmux_list` | List panes with stable `%pane_id`, session/window, current command, working dir, dead/alive. |
 | `tmux_capture` | Read a pane's contents as text (ANSI stripped). Defaults to the TUI surface — what's on screen right now. Pass `include_normal_scrollback: true` to read the history that's scrolled out of view. |
-| `tmux_send` | Type text (typing mode) or send a key-name sequence (keystroke mode). Defaults: literal text, press Enter after. Pass `keys: ["C-c", ...]` for keystrokes; include `"Enter"` in the list to submit. |
+| `tmux_send` | Type text (typing mode) or send a key-name sequence (keystroke mode). Defaults: literal text, press Enter after. Pass `keys: ["C-c", ...]` for keystrokes; include `"Enter"` in the list to submit. Returns a 5-line `post_send_capture` snapshot. |
 | `tmux_wait` | Block until a substring appears in the pane, or time out. Returns a 5-line status hint on both paths so the agent can decide whether to call `tmux_capture`, send more input, or give up. |
 
 ## Install
 
-Symlink into the target profile's plugin directory:
+The plugin is installed in two parts: pip-install the package so it's importable on the system Python, and symlink it into the target profile's plugin directory so the framework's plugin loader can find it.
 
 ```bash
+# 1. Install the package.
+python3 -m venv .venv
+.venv/bin/pip install -e .
+
+# 2. Symlink into the target profile's plugin directory.
 ln -s ~/src/hermes-tmux ~/.hermes/profiles/<profile>/plugins/tmux
 ```
 
@@ -34,17 +41,36 @@ The tools' `check_fn` hides them when the `tmux` binary isn't on PATH. The agent
 * Niche capability — useful for security research and long-running-process workflows, not general users.
 * The tool schemas replace what a traditional skill would have carried — no bundled skill, no recipes, no extra context for the model to load. Everything the agent needs is in the schema descriptions.
 
+## Tests
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/pytest tests/
+```
+
+Nineteen tests across four files (`test_tmux_list.py`, `test_tmux_capture.py`, `test_tmux_send.py`, `test_tmux_wait.py`), all running against a real tmux server on a custom socket. Each test file gets its own server (`scope="module"`). See `AGENTS.md` for the full layout and design rationale.
+
 ## Files
 
 ```
 hermes-tmux/
-├── plugin.yaml          # name, version, provides_tools
-├── __init__.py          # register(ctx) — wires the 4 tools
-├── schemas.py           # 4 tool schemas (what the model reads)
-├── tools.py             # 4 handlers (what runs)
-├── smoke_test.py        # end-to-end test against a real tmux server
+├── pyproject.toml         # project config + pytest config (src-layout)
+├── plugin.yaml            # name, version, provides_tools
 ├── README.md
-└── AGENTS.md
+├── AGENTS.md
+├── LICENSE
+├── src/
+│   └── hermes_tmux/       # the actual Python package
+│       ├── __init__.py    # register(ctx) — wires the 4 tools
+│       ├── schemas.py     # 4 tool schemas (what the model reads)
+│       └── tools.py       # 4 handlers (what runs)
+└── tests/                 # pytest suite (one file per tool)
+    ├── conftest.py
+    ├── test_tmux_list.py
+    ├── test_tmux_capture.py
+    ├── test_tmux_send.py
+    └── test_tmux_wait.py
 ```
 
 ## License

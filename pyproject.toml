@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-tmux"
+version = "0.4.0"
+description = "Tmux pane observability for Hermes Agent — list, capture, send, wait"
+requires-python = ">=3.10"
+# No runtime dependencies. The plugin uses the standard library and
+# the tmux binary, both pre-existing requirements of the host
+# environment.
+dependencies = []
+
+[project.optional-dependencies]
+# Dev install: pip install -e ".[dev]" gets you pytest for the
+# smoke test and the tooling to run it.
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+# src-layout: the actual importable package lives at
+# src/hermes_tmux/. The plugin manifest (plugin.yaml) and the
+# smoke test (tests/test_smoke.py) live at the project root and
+# are not part of the Python package.
+where = ["src"]
+
+[tool.pytest.ini_options]
+# pytest discovers test_*.py by default. The smoke test lives at
+# tests/test_smoke.py and runs end-to-end against a real tmux
+# server (started and torn down by the test itself).
+testpaths = ["tests"]
+addopts = "--tb=short"

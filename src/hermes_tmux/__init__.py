@@ -1,9 +1,9 @@
 """tmux plugin — pane observability for Hermes Agent.
 
-Three tools: ``tmux_list`` (pane inventory), ``tmux_capture`` (read pane
-contents), ``tmux_send`` (send text or a key press). Lifecycle
-(spawning and tearing down panes) is deliberately out of scope — see
-AGENTS.md for the design rules.
+Four tools: ``tmux_list`` (pane inventory), ``tmux_capture`` (read pane
+contents), ``tmux_send`` (send text or a key press), ``tmux_wait``
+(block on a substring). Lifecycle (spawning and tearing down panes) is
+deliberately out of scope — see AGENTS.md for the design rules.
 
 The plugin is a thin wrapper over ``tmux`` shell commands dispatched
 through the framework's ``terminal`` tool, so the usual approval,

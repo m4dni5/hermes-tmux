@@ -15,6 +15,13 @@ Tool handler ────► _ctx_or_none()         # reads stashed ctx
               ───► parses stdout → JSON
 ```
 
+The plugin is a proper Python package under `src/hermes_tmux/` (importable
+as `hermes_tmux` after `pip install -e .`). The framework's plugin loader
+discovers it via the symlink at `~/.hermes/profiles/<profile>/plugins/tmux`
+— that path is unchanged. The pip install makes the package importable
+in tests and from anywhere on the system Python, not just from the
+framework's runtime.
+
 The plugin never touches tmux directly — it always goes through `ctx.dispatch_tool("terminal", ...)`. This is what makes the plugin safe: every tmux call gets the same approval gating and redaction as a normal `terminal()` call.
 
 ## Design decisions
@@ -41,7 +48,7 @@ The plugin never touches tmux directly — it always goes through `ctx.dispatch_
 
 **ANSI always stripped.** The model almost never wants raw escape sequences. If it ever does, `terminal` with a raw `tmux capture-pane -e ...` is one call away.
 
-**`tmux_capture` default = alternate screen.** Confirmed empirically against tmux 3.5a: `capture-pane -p` (no `-a`) returns the TUI surface / visible pane contents, and `-a` returns the normal scrollback. The flag name is the opposite of what you might guess from the manpage's wording. The smoke test (test 11) locks this in — do not flip it without updating both the schema and the test.
+**`tmux_capture` default = alternate screen.** Confirmed empirically against tmux 3.5a: `capture-pane -p` (no `-a`) returns the TUI surface / visible pane contents, and `-a` returns the normal scrollback. The flag name is the opposite of what you might guess from the manpage's wording. The pytest test `test_capture_alt_screen_vs_normal_scrollback` locks this in — do not flip it without updating both the schema and the test.
 
 **No skill is shipped on purpose.** A traditional skill would carry the same content as the tool schema descriptions, plus reverse-shell / SSH / exploit recipes. The plugin's design is to keep that knowledge baked into the schemas and the design rules above; the model reads the schemas at call time. If a future use case needs a skill (a domain the schemas can't cover), add one — but check first whether the schemas can be extended instead.
 
@@ -55,17 +62,40 @@ The plugin never touches tmux directly — it always goes through `ctx.dispatch_
 
 ## Test plan
 
-`smoke_test.py` is the canonical verification. It spins up an isolated tmux server on a custom socket, exercises every public handler against it, and tears down. Run it from the plugin root:
+The test suite is a pytest run that exercises every public handler
+against a real tmux server. The plugin is a Python package under
+`src/hermes_tmux/` (src-layout); tests live in `tests/` and import
+from the installed package.
 
 ```bash
-python3 smoke_test.py
+# One-time setup: create a venv and install the package + dev deps.
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+
+# Run the suite from the project root.
+.venv/bin/pytest tests/
+# Or with the system pytest if it's on PATH (apt: python3-pytest):
+pytest tests/
 ```
 
-It covers: list/capture/send round-trips, target resolution, error envelopes, ANSI stripping, the text/keys split for `tmux_send`, the dead-pane filter, the self-pane guard, the alternate-screen vs normal-scrollback flag semantics with a real vim pane, `tmux_wait` substring-match and timeout cases, and `tmux_send` post-send capture. Fifteen cases. Exits non-zero on any failure.
+The test layout, one file per tool:
 
-For manual checks beyond the smoke test:
+- `tests/test_tmux_list.py` — 3 tests: basic list, `include_dead` + `target` filter, no-match target.
+- `tests/test_tmux_capture.py` — 6 tests: default capture, bare session target, nonexistent target, ANSI stripping, `include_normal_scrollback` parameter, alt-screen vs normal-scrollback with vim.
+- `tests/test_tmux_send.py` — 6 tests: text mode, keys mode, `submit: false`, `oneOf` validation, self-pane guard, post-send capture.
+- `tests/test_tmux_wait.py` — 4 tests: pattern match, timeout, validation, `timeout: 0` clamping.
 
-1. `python3 -m py_compile tools.py schemas.py __init__.py smoke_test.py` — syntax check.
+`tests/conftest.py` provides the per-module tmux-server fixture
+(`scope="module"`, so each test file gets its own server on a
+dedicated socket `hermes-tmux-test-<module>`) and a `FakeCtx` that
+bypasses the framework's terminal pipeline. Nineteen tests total.
+The plugin's design rule — no `tmux_kill` tool — is honored by tests:
+the dead-pane case uses an `exit` shell command under `remain-on-exit
+on`, not `tmux kill-pane`.
+
+For manual checks beyond the pytest suite:
+
+1. `python3 -m py_compile src/hermes_tmux/*.py tests/*.py` — syntax check.
 2. Run `hermes` and confirm `tmux_list` / `tmux_capture` / `tmux_send` / `tmux_wait` appear in the tool list whenever the `tmux` binary is on PATH (regardless of whether the agent is inside a tmux session).
 3. Call each tool and verify the JSON response shape matches `schemas.py`.
 4. The plugin is designed for a single local tmux server. If you genuinely need to drive a separate server, the internal per-pane resolution handles the routing automatically as long as `$TMUX` points at the right server. Multi-server driving across `tmux -L` boundaries is not a supported workflow.
