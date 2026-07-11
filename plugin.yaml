@@ -1,6 +1,6 @@
 name: tmux
-version: 0.2.0
-description: Tmux pane observability — list panes, capture scrollback, send text/keys, and wait for a substring to appear with the right flags baked in.
+version: 0.3.0
+description: Tmux pane observability — list panes, capture scrollback, send text/keys with a 5-line post-send snapshot, and wait for a substring to appear with the right flags baked in.
 author: matt
 provides_tools:
   - tmux_list

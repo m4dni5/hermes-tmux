@@ -23,6 +23,8 @@ The plugin never touches tmux directly — it always goes through `ctx.dispatch_
 
 **`tmux_wait` is a polling substring wait, not `tmux wait-for`.** The wait-for command requires the *command itself* to participate in the sync (`cmd; tmux wait-for -S done`), which couples every command the agent drives to the sync pattern — the reverse shell, the exploit, the server log don't know about tmux. Polling `tmux_capture` is the black-box version that works with anything producing text in a pane. The tool polls at 100ms and returns a 5-line status hint on both match and timeout (so the agent can decide whether to call `tmux_capture` for full output, send more input, or give up). 5 lines is a *status hint*, not a read — the expected follow-up is `tmux_capture(pane, lines=N)` for the full scrollback.
 
+**`tmux_send` returns a 5-line post-send capture on every success.** After the send completes, the handler sleeps 100ms and runs the same `_capture_text` helper `tmux_wait` uses, attaching the result to the response as `post_send_capture`. For instant-return commands (`echo`, `pwd`, `ls`) the snapshot has the result and the agent can skip the explicit `tmux_capture` call. For slow commands (builds, server starts) the snapshot may be empty or partial and the agent falls through to `tmux_capture`. The 100ms tail and the 5-line cap are baked in (not parameters) for the same reason as `tmux_wait`'s hint: same shape, same follow-up. The field is always present on success (empty string if the capture itself failed — pane died mid-send); error envelopes don't include it.
+
 **Default-leave, no teardown by the agent.** Once a pane exists, the agent drives it but does not kill it. The user is watching the session; tearing it down mid-task is destructive without an explicit ask. If the agent needs the window back, ask first.
 
 **Self-pane guard on `tmux_send`.** The plugin captures `$TMUX_PANE` at register time and refuses to send into the agent's own pane — covers the mis-target case (stale `pane_id`, resolved-by-name target, etc.) where keystrokes would land in the agent's own input. Returns `{"error": "refusing to send to own pane (%N); use a different target"}`. Costs one env-var read and one equality check per call. No-op when the agent is outside tmux (the agent has no pane of its own; the tools are still available).
@@ -59,7 +61,7 @@ The plugin never touches tmux directly — it always goes through `ctx.dispatch_
 python3 smoke_test.py
 ```
 
-It covers: list/capture/send round-trips, target resolution, error envelopes, ANSI stripping, the text/keys split for `tmux_send`, the dead-pane filter, the self-pane guard, the alternate-screen vs normal-scrollback flag semantics with a real vim pane, and `tmux_wait` substring-match and timeout cases. Fourteen cases. Exits non-zero on any failure.
+It covers: list/capture/send round-trips, target resolution, error envelopes, ANSI stripping, the text/keys split for `tmux_send`, the dead-pane filter, the self-pane guard, the alternate-screen vs normal-scrollback flag semantics with a real vim pane, `tmux_wait` substring-match and timeout cases, and `tmux_send` post-send capture. Fifteen cases. Exits non-zero on any failure.
 
 For manual checks beyond the smoke test:
 

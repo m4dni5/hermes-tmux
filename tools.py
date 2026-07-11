@@ -44,6 +44,16 @@ _WAIT_POLL_INTERVAL_S = 0.1
 # outer timeout) but enough for a slow shell to respond.
 _WAIT_CAPTURE_TIMEOUT = 3
 
+# tmux_send post-send capture: 100ms tail wait + 5-line snapshot of the
+# pane. Same 5-line contract as tmux_wait — this is a hint, not the
+# answer. For instant-return commands (echo, pwd, ls) the snapshot has
+# the result and the agent can skip tmux_capture. For slow commands
+# (build, server start) the snapshot may be empty or partial and the
+# agent calls tmux_capture. The 100ms is a small tax on every send that
+# buys the win case; not exposed as a parameter.
+_POST_SEND_TAIL_S = 0.1
+_POST_SEND_LINES = 5
+
 # --------------------------------------------------------------------
 # PluginContext handle
 #
@@ -344,6 +354,39 @@ def _capture_text(
     return _strip_ansi(raw).rstrip("\n")
 
 
+def _envelope_with_post_send_capture(
+    response: Dict[str, Any], pane_id: str, socket: Optional[str],
+) -> str:
+    """Add a 5-line post-send capture to a successful tmux_send response.
+
+    Sleeps ``_POST_SEND_TAIL_S`` so the command has a chance to produce
+    output, then captures the last ``_POST_SEND_LINES`` lines of the
+    pane. The result is added to ``response`` as the
+    ``post_send_capture`` field, then the response is returned as a JSON
+    string.
+
+    If the capture itself fails (pane gone, server died), the field is
+    set to an empty string rather than omitting it — the agent's logic
+    is "if post_send_capture has the answer, use it; if empty, call
+    tmux_capture." A missing field forces a "is the key there?" branch
+    the agent doesn't need.
+
+    No schema change: the response shape is opaque to the schema
+    (oneOf describes the *args* shape, not the response). Documented
+    in AGENTS.md alongside the tmux_wait 5-line hint.
+    """
+    time.sleep(_POST_SEND_TAIL_S)
+    text = _capture_text(pane_id, socket, _POST_SEND_LINES,
+                         include_normal=False, timeout=_WAIT_CAPTURE_TIMEOUT)
+    if isinstance(text, dict) and "error" in text:
+        # Capture failed (pane gone mid-send, server died). Empty
+        # string is the documented contract for "no snapshot available";
+        # the agent's fall-through is to call tmux_capture.
+        text = ""
+    response["post_send_capture"] = text
+    return json.dumps(response, ensure_ascii=False)
+
+
 # ---------------------------------------------------------------------------
 # tmux_send
 #
@@ -407,14 +450,15 @@ def tmux_send_handler(args: Dict[str, Any], **kwargs) -> str:
             if submit:
                 _run_tmux(["send-keys", "-t", pane_id, "Enter"], timeout=5, socket=socket)
 
-            return json.dumps({
+            response = {
                 "pane_id": pane_id,
                 "target": target,
                 "mode": "text",
                 "sent": text,
                 "submit": submit,
                 "status": "ok",
-            }, ensure_ascii=False)
+            }
+            return _envelope_with_post_send_capture(response, pane_id, socket)
 
         # Keystroke mode. ``keys`` is the list of tmux key names.
         # No submit flag: the agent includes ``"Enter"`` in the list
@@ -429,13 +473,14 @@ def tmux_send_handler(args: Dict[str, Any], **kwargs) -> str:
         # arguments (no -l, so tmux interprets them as key names).
         _run_tmux(["send-keys", "-t", pane_id] + keys, timeout=5, socket=socket)
 
-        return json.dumps({
+        response = {
             "pane_id": pane_id,
             "target": target,
             "mode": "keys",
             "sent": keys,
             "status": "ok",
-        }, ensure_ascii=False)
+        }
+        return _envelope_with_post_send_capture(response, pane_id, socket)
     except Exception as exc:
         return json.dumps({"error": f"tmux send-keys failed: {exc}"})
 

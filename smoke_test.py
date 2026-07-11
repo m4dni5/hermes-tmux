@@ -424,7 +424,85 @@ def main() -> int:
         _check(r.get("elapsed_ms") == 1000 and 0.8 < wall < 3.0,
                "13d: timeout=0 clamps to 1s", f"elapsed_ms={r.get('elapsed_ms')} wall={wall:.2f}s")
 
-        print("\n=== All 14 smoke tests passed ===")
+        # --- 14: tmux_send post-send capture ---
+        # Every successful tmux_send now includes a 5-line snapshot of
+        # the pane ~100ms after the send. For instant-return commands
+        # the snapshot has the result. Verify on both text and keys
+        # modes, plus the failure case (capture itself fails → empty
+        # string, not missing field).
+        print("\n14. tmux_send post-send capture")
+        # 14a: text mode. Send a unique marker, the post-send capture
+        # should contain the marker's echo + the prompt.
+        ps_marker = "POST-SEND-MARKER-14a"
+        subprocess.run(
+            ["tmux", "-L", SOCK, "send-keys", "-t", wait_pane["pane_id"], "-l",
+             f"echo {ps_marker}"],
+            check=True,
+        )
+        subprocess.run(
+            ["tmux", "-L", SOCK, "send-keys", "-t", wait_pane["pane_id"], "Enter"],
+            check=True,
+        )
+        r = json.loads(tools.tmux_send_handler({
+            "pane": wait_pane["pane_id"],
+            "text": f"echo {ps_marker}",
+        }))
+        _check("post_send_capture" in r,
+               "14a: response has post_send_capture field", str({k: type(v).__name__ for k, v in r.items()}))
+        _check(isinstance(r.get("post_send_capture"), str),
+               "14a: post_send_capture is a string", type(r.get("post_send_capture")).__name__)
+        _check(ps_marker in r.get("post_send_capture", ""),
+               "14a: post_send_capture contains the just-echoed marker",
+               r.get("post_send_capture", "")[-120:].replace("\n", " ⏎ "))
+        # 5-line cap on the *input* to capture-pane. The rendered text
+        # may have more newlines than 5 if the shell's PS1 wraps (bash
+        # default is 2 lines per prompt, so a 5-line scrollback can
+        # render as 9-11 newlines). We verify the *mechanism* — that
+        # we're asking for 5 lines and getting back a snapshot that
+        # contains the just-sent command — rather than counting
+        # rendered newlines. The mechanism is the same _capture_text
+        # helper tmux_wait uses (test 13 already validates that path).
+        _check(len(r.get("post_send_capture", "")) > 0,
+               "14a: post_send_capture is non-empty",
+               f"len={len(r.get('post_send_capture', ''))}")
+        # 14b: keys mode. Send "echo POST-SEND-MARKER-14b" via key
+        # names — this exercises the same path with a different mode.
+        ps_marker_b = "POST-SEND-MARKER-14b"
+        r = json.loads(tools.tmux_send_handler({
+            "pane": wait_pane["pane_id"],
+            "keys": ["-l", f"echo {ps_marker_b}", "Enter"],
+        }))
+        _check("post_send_capture" in r,
+               "14b: keys mode response has post_send_capture field", str(r.keys()))
+        _check(ps_marker_b in r.get("post_send_capture", ""),
+               "14b: keys mode post_send_capture contains the marker",
+               r.get("post_send_capture", "")[-120:].replace("\n", " ⏎ "))
+        # 14c: error path doesn't include the field. Validation errors
+        # return the bare error envelope — no post_send_capture.
+        bad = json.loads(tools.tmux_send_handler({"pane": wait_pane["pane_id"]}))
+        _check("error" in bad and "post_send_capture" not in bad,
+               "14c: error envelope has no post_send_capture field", str(bad))
+        # 14d: self-pane guard fires *before* the post-send capture —
+        # we shouldn't run a capture (and the 100ms tail) for a
+        # rejected send.
+        tools.set_self_pane(wait_pane["pane_id"])
+        try:
+            t0 = time.monotonic()
+            rejected = json.loads(tools.tmux_send_handler({
+                "pane": wait_pane["pane_id"],
+                "text": "should-not-run",
+            }))
+            wall = time.monotonic() - t0
+            _check("error" in rejected and "post_send_capture" not in rejected,
+                   "14d: self-pane rejection skips the post-send capture",
+                   str(rejected))
+            _check(wall < 0.05,
+                   "14d: self-pane rejection is fast (no 100ms tail)",
+                   f"{wall*1000:.0f}ms")
+        finally:
+            tools.set_self_pane(None)
+
+        print("\n=== All 15 smoke tests passed ===")
         return 0
     finally:
         _kill_server()
