@@ -2,7 +2,7 @@
 
 Tmux pane observability for [Hermes Agent](https://github.com/NousResearch/hermes-agent) — four tools that let the agent see what's running in tmux, send text/keys into panes, and wait for output to appear, with tmux's tricky flag combinations baked in as defaults so the model never has to remember them.
 
-The plugin is a proper Python package (src-layout, `pip install -e .`) and is exposed as `hermes_tmux` on the system Python. Tests are pytest-driven.
+The plugin is a proper Python package (src-layout) installed by symlinking it into the target profile's plugin directory. The `pyproject.toml` adds `src/` to pytest's `pythonpath` so `pytest tests/` runs directly from the source tree.
 
 ## Tools
 
