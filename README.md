@@ -15,14 +15,10 @@ The plugin is a proper Python package (src-layout, `pip install -e .`) and is ex
 
 ## Install
 
-The plugin is installed in two parts: pip-install the package so it's importable on the system Python, and symlink it into the target profile's plugin directory so the framework's plugin loader can find it.
+The plugin is symlinked into the target profile's plugin directory so the framework's plugin loader can find it. `pyproject.toml` adds `src/` to pytest's `pythonpath`, so the tests run directly from the source tree — no `pip install -e .` required.
 
 ```bash
-# 1. Install the package.
-python3 -m venv .venv
-.venv/bin/pip install -e .
-
-# 2. Symlink into the target profile's plugin directory.
+# 1. Symlink into the target profile's plugin directory.
 ln -s ~/src/hermes-tmux ~/.hermes/profiles/<profile>/plugins/tmux
 ```
 
@@ -44,9 +40,7 @@ The tools' `check_fn` hides them when the `tmux` binary isn't on PATH. The agent
 ## Tests
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest tests/
+pytest tests/
 ```
 
 Nineteen tests across four files (`test_tmux_list.py`, `test_tmux_capture.py`, `test_tmux_send.py`, `test_tmux_wait.py`), all running against a real tmux server on a custom socket. Each test file gets its own server (`scope="module"`). See `AGENTS.md` for the full layout and design rationale.

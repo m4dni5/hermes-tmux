@@ -25,6 +25,11 @@ dev = ["pytest>=7"]
 where = ["src"]
 
 [tool.pytest.ini_options]
+# Add ``src/`` to ``sys.path`` so ``from hermes_tmux import tools``
+# resolves without requiring ``pip install -e .`` first. This makes
+# the bare ``pytest tests/`` invocation (apt: python3-pytest) the
+# canonical verification command — no venv activation needed.
+pythonpath = ["src"]
 # pytest discovers test_*.py by default. The smoke test lives at
 # tests/test_smoke.py and runs end-to-end against a real tmux
 # server (started and torn down by the test itself).

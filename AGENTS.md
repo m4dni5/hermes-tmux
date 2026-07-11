@@ -64,17 +64,13 @@ The plugin never touches tmux directly — it always goes through `ctx.dispatch_
 
 The test suite is a pytest run that exercises every public handler
 against a real tmux server. The plugin is a Python package under
-`src/hermes_tmux/` (src-layout); tests live in `tests/` and import
-from the installed package.
+`src/hermes_tmux/` (src-layout); `pyproject.toml` adds `src/` to
+pytest's `pythonpath` so the test run can import the package
+without a prior `pip install -e .`.
 
 ```bash
-# One-time setup: create a venv and install the package + dev deps.
-python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
-
-# Run the suite from the project root.
-.venv/bin/pytest tests/
-# Or with the system pytest if it's on PATH (apt: python3-pytest):
+# Run the suite from the project root using the system pytest
+# (apt: python3-pytest) — no venv or pip install required.
 pytest tests/
 ```
 
@@ -92,6 +88,12 @@ bypasses the framework's terminal pipeline. Nineteen tests total.
 The plugin's design rule — no `tmux_kill` tool — is honored by tests:
 the dead-pane case uses an `exit` shell command under `remain-on-exit
 on`, not `tmux kill-pane`.
+
+If you do want a venv (e.g. for `pip install -e .` to make the
+package importable from anywhere on the system Python), the project
+still supports that workflow — `[project.optional-dependencies]`
+has a `dev` extra that pulls in pytest. But the canonical test
+command is just `pytest tests/`.
 
 For manual checks beyond the pytest suite:
 
