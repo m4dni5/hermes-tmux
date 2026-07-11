@@ -1,0 +1,11 @@
+name: tmux
+version: 0.2.0
+description: Tmux pane observability — list panes, capture scrollback, send text/keys, and wait for a substring to appear with the right flags baked in.
+author: matt
+provides_tools:
+  - tmux_list
+  - tmux_capture
+  - tmux_send
+  - tmux_wait
+# No requires_env — the tools' check_fn handles availability (TMUX env + tmux binary).
+# No skills shipped on purpose — see AGENTS.md for the rationale.
