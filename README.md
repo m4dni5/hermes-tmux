@@ -1,14 +1,15 @@
 # hermes-tmux
 
-Tmux pane observability for [Hermes Agent](https://github.com/NousResearch/hermes-agent) — three tools that let the agent see what's running in tmux and send text/keys into panes, with tmux's tricky flag combinations baked in as defaults so the model never has to remember them.
+Tmux pane observability for [Hermes Agent](https://github.com/NousResearch/hermes-agent) — four tools that let the agent see what's running in tmux, send text/keys into panes, and wait for output to appear, with tmux's tricky flag combinations baked in as defaults so the model never has to remember them.
 
 ## Tools
 
 | Tool | What it does |
 |---|---|
 | `tmux_list` | List panes with stable `%pane_id`, session/window, current command, working dir, dead/alive. |
-| `tmux_capture` | Read a pane's contents as text (ANSI stripped, long lines unwrapped). Defaults to the TUI surface — what's on screen right now. Pass `include_normal_scrollback: true` to read the history that's scrolled out of view. |
-| `tmux_send` | Type text or send a key name into a pane. Defaults: literal mode, press Enter. Set `literal: false` and `press_enter: false` to send `C-c`, arrow keys, etc. Use this instead of `terminal("tmux send-keys ...")` — the flag choices are handled here. |
+| `tmux_capture` | Read a pane's contents as text (ANSI stripped). Defaults to the TUI surface — what's on screen right now. Pass `include_normal_scrollback: true` to read the history that's scrolled out of view. |
+| `tmux_send` | Type text (typing mode) or send a key-name sequence (keystroke mode). Defaults: literal text, press Enter after. Pass `keys: ["C-c", ...]` for keystrokes; include `"Enter"` in the list to submit. |
+| `tmux_wait` | Block until a substring appears in the pane, or time out. Returns a 5-line status hint on both paths so the agent can decide whether to call `tmux_capture`, send more input, or give up. |
 
 ## Install
 
@@ -26,7 +27,7 @@ plugins:
     - tmux
 ```
 
-The tools' `check_fn` hides them when `$TMUX` is not set or the `tmux` binary is missing — the model won't see `tmux_list` etc. in non-tmux contexts, and will fall through to `terminal` naturally.
+The tools' `check_fn` hides them when the `tmux` binary isn't on PATH. The agent doesn't have to be in a tmux session itself to drive one.
 
 ## Why a plugin (not a built-in tool)
 
@@ -38,9 +39,9 @@ The tools' `check_fn` hides them when `$TMUX` is not set or the `tmux` binary is
 ```
 hermes-tmux/
 ├── plugin.yaml          # name, version, provides_tools
-├── __init__.py          # register(ctx) — wires the 3 tools
-├── schemas.py           # 3 tool schemas (what the model reads)
-├── tools.py             # 3 handlers (what runs)
+├── __init__.py          # register(ctx) — wires the 4 tools
+├── schemas.py           # 4 tool schemas (what the model reads)
+├── tools.py             # 4 handlers (what runs)
 ├── smoke_test.py        # end-to-end test against a real tmux server
 ├── README.md
 └── AGENTS.md

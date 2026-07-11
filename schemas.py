@@ -40,8 +40,8 @@ TMUX_CAPTURE_SCHEMA = {
     "name": "tmux_capture",
     "description": (
         "Read the contents of a tmux pane as text — useful for shell "
-        "prompts, REPLs, and password prompts — with ANSI escape "
-        "sequences stripped and long lines unwrapped."
+        "prompts and password prompts — with ANSI escape sequences "
+        "stripped."
     ),
     "parameters": {
         "type": "object",
@@ -79,8 +79,8 @@ TMUX_SEND_SCHEMA = {
     "description": (
         "Send text or keystrokes to a tmux pane. Use this instead of "
         "calling `terminal('tmux send-keys ...')` directly — the flag "
-        "choices are handled here. Does not return pane output — pair "
-        "with `tmux_capture` to read the result."
+        "choices are handled here. Returns a 5-line post-send snapshot "
+        "of the pane; call `tmux_capture` for the full scrollback."
     ),
     "parameters": {
         "oneOf": [
@@ -151,10 +151,9 @@ TMUX_WAIT_SCHEMA = {
     "name": "tmux_wait",
     "description": (
         "Wait for a substring to appear in a tmux pane, or time out. "
-        "Returns a 5-line status hint on both match and timeout so the "
-        "agent can decide whether to call `tmux_capture` for full "
-        "output, send more input, or give up. Polls the pane at ~100ms; "
-        "default timeout 10s, max 60s."
+        "Returns a 5-line status hint on both paths so the agent can "
+        "decide whether to call `tmux_capture`, send more input, or "
+        "give up."
     ),
     "parameters": {
         "type": "object",

@@ -2,13 +2,13 @@
 
 ## What this is
 
-A Hermes plugin exposing three tmux-related tools (`tmux_list`, `tmux_capture`, `tmux_send`). The plugin is a thin wrapper over the `tmux` CLI, routed through the framework's `terminal` tool so all approval/redaction/interrupt semantics apply. There is no bundled skill — the tool schemas are the documentation.
+A Hermes plugin exposing four tmux-related tools (`tmux_list`, `tmux_capture`, `tmux_send`, `tmux_wait`). The plugin is a thin wrapper over the `tmux` CLI, routed through the framework's `terminal` tool so all approval/redaction/interrupt semantics apply. There is no bundled skill — the tool schemas are the documentation.
 
 ## Architecture
 
 ```
 register(ctx) ────► tools.set_ctx(ctx)    # stashed in tools.py module global
-                  └► ctx.register_tool    # × 3, gated on _tmux_available
+                  └► ctx.register_tool    # × 4, gated on _tmux_available
 
 Tool handler ────► _ctx_or_none()         # reads stashed ctx
               ───► _run_tmux(args)       # → ctx.dispatch_tool("terminal", ...)
@@ -31,7 +31,7 @@ The plugin never touches tmux directly — it always goes through `ctx.dispatch_
 
 **Each interactive session is a new named window.** Windows are stable; pane indexes shift when panes die. Pick a name that describes the session (`ssh-prod`, `revshell-app1`, `mysql-orders`) so `tmux_list(target="<name>")` finds it later.
 
-**`check_fn` gates on the `tmux` binary only.** The agent doesn't have to be inside a tmux session to drive one — driving a session from outside (e.g. a subagent spawned in a non-tmux context) is the realistic case. Tools are visible whenever `tmux` is on PATH.
+**`check_fn` gates on the `tmux` binary only.** Tools are visible whenever `tmux` is on PATH, including when the agent itself is outside any tmux session (driving a session from outside is supported).
 
 **Per-pane socket resolution (internal mechanism).** `_resolve_pane_id` queries the target's tmux server with `display-message -p '#{pane_id} ... #{socket_path}'` and returns the server name. `_run_tmux` adds `-L <name>` only when the resolved server differs from the agent's own (captured from `$TMUX` at register time). The agent never sees the socket; the resolution is automatic and only matters when the agent's `$TMUX` points at a server that doesn't match the default. This is the fix for the original `tmux_list_socket_mismatch` bug — when the agent is in server A and looks at a pane in server A, the tool queries server A.
 
@@ -66,6 +66,6 @@ It covers: list/capture/send round-trips, target resolution, error envelopes, AN
 For manual checks beyond the smoke test:
 
 1. `python3 -m py_compile tools.py schemas.py __init__.py smoke_test.py` — syntax check.
-2. Run `hermes` and confirm `tmux_list` / `tmux_capture` / `tmux_send` appear in the tool list whenever the `tmux` binary is on PATH (regardless of whether the agent is inside a tmux session).
+2. Run `hermes` and confirm `tmux_list` / `tmux_capture` / `tmux_send` / `tmux_wait` appear in the tool list whenever the `tmux` binary is on PATH (regardless of whether the agent is inside a tmux session).
 3. Call each tool and verify the JSON response shape matches `schemas.py`.
 4. The plugin is designed for a single local tmux server. If you genuinely need to drive a separate server, the internal per-pane resolution handles the routing automatically as long as `$TMUX` points at the right server. Multi-server driving across `tmux -L` boundaries is not a supported workflow.
