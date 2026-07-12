@@ -2,8 +2,6 @@
 
 Tmux pane observability for [Hermes Agent](https://github.com/NousResearch/hermes-agent) — four tools that let the agent see what's running in tmux, send text/keys into panes, and wait for output to appear, with tmux's tricky flag combinations baked in as defaults so the model never has to remember them.
 
-The plugin is a flat directory plugin installed by symlinking it into the target profile's plugin directory. `pyproject.toml` adds `.` (project root) to pytest's `pythonpath` so `pytest tests/` runs directly from the source tree.
-
 ## Tools
 
 | Tool | What it does |
@@ -15,18 +13,8 @@ The plugin is a flat directory plugin installed by symlinking it into the target
 
 ## Install
 
-The plugin is symlinked into the target profile's plugin directory so the framework's plugin loader can find it. `pyproject.toml` adds `.` to pytest's `pythonpath`, so the tests run directly from the source tree — no `pip install` required.
-
-**Prerequisites:** the `tmux` binary and `pytest` must be available. The plugin's `check_fn` hides the tools when `tmux` isn't on PATH, and the test suite needs `pytest`. On Debian/Ubuntu:
-
 ```bash
-apt install tmux python3-pytest
-```
-
-On macOS, `brew install tmux pytest`. In a venv, `pip install pytest`.
-
-```bash
-# 1. Symlink into the target profile's plugin directory.
+# Symlink into the target profile's plugin directory
 ln -s ~/src/hermes-tmux ~/.hermes/profiles/<profile>/plugins/tmux
 ```
 
