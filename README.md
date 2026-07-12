@@ -14,7 +14,12 @@ Tmux pane observability for [Hermes Agent](https://github.com/NousResearch/herme
 ## Install
 
 ```bash
-# Symlink into the target profile's plugin directory
+hermes plugins install git@github.com:m4dni5/hermes-tmux.git
+```
+
+Or manually:
+
+```bash
 ln -s ~/src/hermes-tmux ~/.hermes/profiles/<profile>/plugins/tmux
 ```
 
@@ -26,12 +31,7 @@ plugins:
     - tmux
 ```
 
-The tools' `check_fn` hides them when the `tmux` binary isn't on PATH. The agent doesn't have to be in a tmux session itself to drive one.
-
-## Why a plugin (not a built-in tool)
-
-* Niche capability — useful for security research and long-running-process workflows, not general users.
-* The tool schemas replace what a traditional skill would have carried — no bundled skill, no recipes, no extra context for the model to load. Everything the agent needs is in the schema descriptions.
+The tools appear whenever the `tmux` binary is on PATH — the agent doesn't have to be inside a tmux session to drive one.
 
 ## Tests
 
@@ -39,7 +39,7 @@ The tools' `check_fn` hides them when the `tmux` binary isn't on PATH. The agent
 pytest tests/
 ```
 
-Nineteen tests across four files (`test_tmux_list.py`, `test_tmux_capture.py`, `test_tmux_send.py`, `test_tmux_wait.py`), all running against a real tmux server on a custom socket. Each test file gets its own server (`scope="module"`). See `AGENTS.md` for the full layout and design rationale.
+Nineteen tests across four files: `test_tmux_list.py` (3), `test_tmux_capture.py` (6), `test_tmux_send.py` (6), `test_tmux_wait.py` (4). Each file gets its own tmux server (`scope="module"`). See `AGENTS.md` for the full layout and design rationale.
 
 ## Files
 
