@@ -16,18 +16,9 @@ Tmux pane observability for [Hermes Agent](https://github.com/NousResearch/herme
 ```bash
 hermes plugins install git@github.com:m4dni5/hermes-tmux.git
 hermes plugins enable hermes-tmux
-# Restart Hermes
 ```
 
 The tools appear whenever the `tmux` binary is on PATH — the agent doesn't have to be inside a tmux session to drive one.
-
-## Tests
-
-```bash
-pytest tests/
-```
-
-Nineteen tests across four files: `test_tmux_list.py` (3), `test_tmux_capture.py` (6), `test_tmux_send.py` (6), `test_tmux_wait.py` (4). Each file gets its own tmux server (`scope="module"`). See `AGENTS.md` for the full layout and design rationale.
 
 ## Files
 
