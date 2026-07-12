@@ -15,20 +15,8 @@ Tmux pane observability for [Hermes Agent](https://github.com/NousResearch/herme
 
 ```bash
 hermes plugins install git@github.com:m4dni5/hermes-tmux.git
-```
-
-Or manually:
-
-```bash
-ln -s ~/src/hermes-tmux ~/.hermes/profiles/<profile>/plugins/tmux
-```
-
-Then enable in `~/.hermes/profiles/<profile>/config.yaml`:
-
-```yaml
-plugins:
-  enabled:
-    - tmux
+hermes plugins enable hermes-tmux
+# Restart Hermes
 ```
 
 The tools appear whenever the `tmux` binary is on PATH — the agent doesn't have to be inside a tmux session to drive one.
