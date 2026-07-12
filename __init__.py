@@ -16,7 +16,8 @@ import logging
 import os
 import shutil
 
-from . import schemas, tools
+import schemas
+import tools
 
 logger = logging.getLogger(__name__)
 

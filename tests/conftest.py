@@ -25,7 +25,7 @@ from typing import Any, Iterator
 
 import pytest
 
-from hermes_tmux import tools
+import tools
 
 
 SOCKET_BASE = "hermes-tmux-test"

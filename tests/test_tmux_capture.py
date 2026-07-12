@@ -15,7 +15,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from hermes_tmux import tools
+import tools
 
 from .conftest import tmux_send
 
@@ -29,7 +29,10 @@ def test_capture_default_returns_visible(sock: str) -> None:
     result = json.loads(tools.tmux_capture_handler({"pane": "%0", "lines": 50}))
     assert "hello-from-tmux-plugin" in result["text"]
     assert result["pane_id"] == "%0"
-    assert result["target"] == "test:bash.0"
+    # Fast path: when the input is a %pane_id and the agent is inside
+    # tmux, the target is the bare %pane_id (not session:window.pane).
+    # The full form is available via tmux_list if needed.
+    assert result["target"] == "%0"
 
 
 def test_capture_accepts_bare_session_name(sock: str) -> None:

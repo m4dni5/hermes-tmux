@@ -7,5 +7,5 @@ provides_tools:
   - tmux_capture
   - tmux_send
   - tmux_wait
-# No requires_env — the tools' check_fn handles availability (TMUX env + tmux binary).
+# No requires_env — the tools' check_fn handles availability (tmux binary on PATH).
 # No skills shipped on purpose — see AGENTS.md for the rationale.

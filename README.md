@@ -2,7 +2,7 @@
 
 Tmux pane observability for [Hermes Agent](https://github.com/NousResearch/hermes-agent) — four tools that let the agent see what's running in tmux, send text/keys into panes, and wait for output to appear, with tmux's tricky flag combinations baked in as defaults so the model never has to remember them.
 
-The plugin is a proper Python package (src-layout) installed by symlinking it into the target profile's plugin directory. The `pyproject.toml` adds `src/` to pytest's `pythonpath` so `pytest tests/` runs directly from the source tree.
+The plugin is a flat directory plugin installed by symlinking it into the target profile's plugin directory. `pyproject.toml` adds `.` (project root) to pytest's `pythonpath` so `pytest tests/` runs directly from the source tree.
 
 ## Tools
 
@@ -15,7 +15,7 @@ The plugin is a proper Python package (src-layout) installed by symlinking it in
 
 ## Install
 
-The plugin is symlinked into the target profile's plugin directory so the framework's plugin loader can find it. `pyproject.toml` adds `src/` to pytest's `pythonpath`, so the tests run directly from the source tree — no `pip install -e .` required.
+The plugin is symlinked into the target profile's plugin directory so the framework's plugin loader can find it. `pyproject.toml` adds `.` to pytest's `pythonpath`, so the tests run directly from the source tree — no `pip install` required.
 
 **Prerequisites:** the `tmux` binary and `pytest` must be available. The plugin's `check_fn` hides the tools when `tmux` isn't on PATH, and the test suite needs `pytest`. On Debian/Ubuntu:
 
@@ -57,16 +57,14 @@ Nineteen tests across four files (`test_tmux_list.py`, `test_tmux_capture.py`, `
 
 ```
 hermes-tmux/
-├── pyproject.toml         # project config + pytest config (src-layout)
+├── pyproject.toml         # pytest config
 ├── plugin.yaml            # name, version, provides_tools
+├── __init__.py            # register(ctx) — wires the 4 tools
+├── schemas.py             # 4 tool schemas (what the model reads)
+├── tools.py               # 4 handlers (what runs)
 ├── README.md
 ├── AGENTS.md
 ├── LICENSE
-├── src/
-│   └── hermes_tmux/       # the actual Python package
-│       ├── __init__.py    # register(ctx) — wires the 4 tools
-│       ├── schemas.py     # 4 tool schemas (what the model reads)
-│       └── tools.py       # 4 handlers (what runs)
 └── tests/                 # pytest suite (one file per tool)
     ├── conftest.py
     ├── test_tmux_list.py

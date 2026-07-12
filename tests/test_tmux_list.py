@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import subprocess
 
-from hermes_tmux import tools
+import tools
 
 from .conftest import tmux_send
 

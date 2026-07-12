@@ -197,6 +197,19 @@ def _resolve_pane_id(pane: str) -> Dict[str, Any]:
 
     pane = pane.strip()
 
+    # Fast path: when the input is already a ``%pane_id`` and the agent
+    # is inside tmux (``$TMUX`` was set at register time, so
+    # ``_self_socket`` is non-None), skip the ``display-message``
+    # round-trip. tmux accepts ``%pane_id`` directly as a target, and
+    # the agent's own socket is the default server — no ``-L`` needed.
+    # The trade-off: ``target`` in the response is the bare ``%pane_id``
+    # instead of ``session:window.pane``. That's still a valid target
+    # format for any subsequent call; the full form is available via
+    # ``tmux_list`` if the agent needs it.
+    self_sock = _self_socket_or_none()
+    if pane.startswith("%") and self_sock is not None:
+        return {"pane_id": pane, "target": pane, "socket": self_sock}
+
     # Single display-message call: pane_id, target, and socket_path.
     # tmux's #{socket_path} format variable returns the absolute path of
     # the server's socket; we take the basename for the -L flag.
@@ -468,6 +481,17 @@ def tmux_send_handler(args: Dict[str, Any], **kwargs) -> str:
             return json.dumps({"error": "keys must be a list of strings"})
         if not keys:
             return json.dumps({"error": "keys must be a non-empty list"})
+
+        # Flag-injection guard: tmux key names are alphanumeric (Enter,
+        # C-c, BSpace, Up, etc.). A leading ``-`` would be interpreted
+        # as a tmux flag (``-l`` for literal, ``-N`` for repeat count,
+        # ``-X`` for copy-mode commands), not as a key name. The tmux
+        # key name for ``-`` is ``Minus`` — no legitimate key name
+        # starts with ``-``.
+        if any(k.startswith("-") for k in keys):
+            return json.dumps({
+                "error": "key names must not start with '-' (use 'Minus' for the - key)",
+            })
 
         # One ``send-keys`` call with the key names as trailing
         # arguments (no -l, so tmux interprets them as key names).

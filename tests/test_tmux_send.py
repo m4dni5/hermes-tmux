@@ -15,7 +15,7 @@ import json
 import subprocess
 import time
 
-from hermes_tmux import tools
+import tools
 
 from .conftest import tmux_send
 
@@ -72,6 +72,8 @@ def test_send_validation_rejects_bad_shape(sock: str) -> None:
         ({"pane": "%0", "text": "x", "keys": ["C-c"]}, "not both"),
         ({"pane": "%0", "keys": []}, "non-empty"),
         ({"pane": "%0", "keys": "C-c"}, "list of strings"),
+        ({"pane": "%0", "keys": ["-l", "echo hi"]}, "must not start with '-'"),
+        ({"pane": "%0", "keys": ["Enter", "-N"]}, "must not start with '-'"),
     ]
     for args, expected_substr in cases:
         r = json.loads(tools.tmux_send_handler(args))
@@ -121,12 +123,17 @@ def test_send_post_send_capture(sock: str) -> None:
     assert isinstance(r["post_send_capture"], str)
     assert marker in r["post_send_capture"]
 
-    # 14b: keys mode.
+    # 14b: keys mode — send a literal key-name sequence. Use Up to
+    # recall the last command, then Enter to submit it. This exercises
+    # real tmux key names (not flag-like strings) and verifies the
+    # post-send capture works for the keys branch.
     marker_b = "POST-SEND-MARKER-14b"
+    # First put a command in history via text mode.
+    tools.tmux_send_handler({"pane": "%0", "text": f"echo {marker_b}"})
+    time.sleep(0.3)
+    # Now send Up + Enter via keys mode to re-run it.
     r = json.loads(
-        tools.tmux_send_handler(
-            {"pane": "%0", "keys": ["-l", f"echo {marker_b}", "Enter"]}
-        )
+        tools.tmux_send_handler({"pane": "%0", "keys": ["Up", "Enter"]})
     )
     assert "post_send_capture" in r
     assert marker_b in r["post_send_capture"]

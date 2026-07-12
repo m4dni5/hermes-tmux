@@ -15,8 +15,8 @@ Tool handler ────► _ctx_or_none()         # reads stashed ctx
               ───► parses stdout → JSON
 ```
 
-The plugin is a proper Python package under `src/hermes_tmux/` (importable
-as `hermes_tmux` after `pip install -e .`). The framework's plugin loader
+The plugin is a flat directory plugin (importable from the project root
+after symlinking into the target profile's plugin directory). The framework's plugin loader
 discovers it via the symlink at `~/.hermes/profiles/<profile>/plugins/tmux`
 — that path is unchanged. The pip install makes the package importable
 in tests and from anywhere on the system Python, not just from the
@@ -42,6 +42,10 @@ The plugin never touches tmux directly — it always goes through `ctx.dispatch_
 
 **Per-pane socket resolution (internal mechanism).** `_resolve_pane_id` queries the target's tmux server with `display-message -p '#{pane_id} ... #{socket_path}'` and returns the server name. `_run_tmux` adds `-L <name>` only when the resolved server differs from the agent's own (captured from `$TMUX` at register time). The agent never sees the socket; the resolution is automatic and only matters when the agent's `$TMUX` points at a server that doesn't match the default. This is the fix for the original `tmux_list_socket_mismatch` bug — when the agent is in server A and looks at a pane in server A, the tool queries server A.
 
+**Fast path for `%pane_id` inputs.** When the input already starts with `%` and the agent is inside tmux (`_self_socket` is non-None), `_resolve_pane_id` skips the `display-message` round-trip entirely — tmux accepts `%pane_id` as a target directly, and the agent's own socket is the default. The trade-off: the `target` field in the response is the bare `%pane_id` instead of `session:window.pane`. That's still a valid target for any subsequent call; the full form is available via `tmux_list` if the agent needs it.
+
+**Flag-injection guard on `tmux_send` keys mode.** The `keys` list is validated before being passed to `send-keys`. Tmux key names are alphanumeric (`Enter`, `C-c`, `BSpace`, `Up`, `Minus`, etc.) — no legitimate key name starts with `-`. A leading `-` would be interpreted as a tmux flag (`-l` for literal mode, `-N` for repeat count, `-X` for copy-mode commands) rather than as a key name. The guard rejects these with a clear error message pointing to `Minus` as the key name for the `-` character.
+
 **All tmux flags baked in.** `capture-pane -p -J -q` (default) and `capture-pane -p -J -a -q` (with `include_normal_scrollback: true`). `send-keys -l` + separate `Enter` key for sends. The schema descriptions are where the agent reads this; the parameters are not exposed.
 
 **Both target formats accepted.** `%pane_id` and `session:window.pane` both work. Internally normalized to `%pane_id` via `tmux display-message`. Response always echoes both so the model can chain calls.
@@ -64,7 +68,7 @@ The plugin never touches tmux directly — it always goes through `ctx.dispatch_
 
 The test suite is a pytest run that exercises every public handler
 against a real tmux server. The plugin is a Python package under
-`src/hermes_tmux/` (src-layout); `pyproject.toml` adds `src/` to
+the project root `__init__.py`; `pyproject.toml` adds `.` (project root) to
 pytest's `pythonpath` so the test run can import the package
 without a prior `pip install -e .`.
 
@@ -97,7 +101,7 @@ command is just `pytest tests/`.
 
 For manual checks beyond the pytest suite:
 
-1. `python3 -m py_compile src/hermes_tmux/*.py tests/*.py` — syntax check.
+1. `python3 -m py_compile *.py tests/*.py` — syntax check.
 2. Run `hermes` and confirm `tmux_list` / `tmux_capture` / `tmux_send` / `tmux_wait` appear in the tool list whenever the `tmux` binary is on PATH (regardless of whether the agent is inside a tmux session).
 3. Call each tool and verify the JSON response shape matches `schemas.py`.
 4. The plugin is designed for a single local tmux server. If you genuinely need to drive a separate server, the internal per-pane resolution handles the routing automatically as long as `$TMUX` points at the right server. Multi-server driving across `tmux -L` boundaries is not a supported workflow.
