@@ -6,11 +6,11 @@ tmux server, and tears it down on exit. Each test file in this
 directory gets its own socket to avoid test-to-test state bleed.
 
 The ``FakeCtx`` class mocks the framework's ``PluginContext`` —
-``tools._run_tmux`` calls ``ctx.dispatch_tool("terminal", ...)`` to
+``tmux_tools._run_tmux`` calls ``ctx.dispatch_tool("terminal", ...)`` to
 run tmux, and in production that goes through the framework's
 approval/redaction/interrupt pipelines. For testing we bypass that
 and run tmux directly. The fake's return shape matches what
-``tools._run_tmux`` parses: ``{"output", "exit_code", "error"}``.
+``tmux_tools._run_tmux`` parses: ``{"output", "exit_code", "error"}``.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from typing import Any, Iterator
 
 import pytest
 
-import tools
+import tmux_tools
 
 
 SOCKET_BASE = "hermes-tmux-test"
@@ -104,20 +104,20 @@ def tmux_server(request: pytest.FixtureRequest, sock: str) -> Iterator[None]:
     # (now-test-server-pointing) env so per-pane resolution's
     # "is this the same socket" check works.
     import importlib
-    importlib.reload(tools)
-    tools.set_ctx(FakeCtx())
+    importlib.reload(tmux_tools)
+    tmux_tools.set_ctx(FakeCtx())
     # Capture the agent's own socket so per-pane resolution's
     # "is this the same socket" check works. We deliberately do NOT
     # set the self-pane guard here: most tests send to the test
     # server's initial pane (``%0``) and don't want every call
     # rejected as a self-target. Tests that exercise the guard
     # (``test_send_self_pane_guard``) set it explicitly with
-    # ``tools.set_self_pane(...)`` and clean up in a ``finally``.
+    # ``tmux_tools.set_self_pane(...)`` and clean up in a ``finally``.
     tmux_env = os.environ.get("TMUX", "")
     if tmux_env:
         first = tmux_env.split(",", 1)[0]
         socket_name = first.rsplit("/", 1)[-1] if "/" in first else first
-        tools.set_self_socket(socket_name)
+        tmux_tools.set_self_socket(socket_name)
 
     try:
         yield

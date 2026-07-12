@@ -7,7 +7,7 @@ A Hermes plugin exposing four tmux-related tools (`tmux_list`, `tmux_capture`, `
 ## Architecture
 
 ```
-register(ctx) ────► tools.set_ctx(ctx)    # stashed in tools.py module global
+register(ctx) ────► tmux_tools.set_ctx(ctx)    # stashed in tmux_tools.py module global
                   └► ctx.register_tool    # × 4, gated on _tmux_available
 
 Tool handler ────► _ctx_or_none()         # reads stashed ctx
@@ -58,11 +58,11 @@ The plugin never touches tmux directly — it always goes through `ctx.dispatch_
 
 ## Gotchas for the next agent
 
-- **The `ctx` is captured once at `register()` time** and stashed in a module global in `tools.py`. If you add a new handler, call `_ctx_or_none()` (or the helpers in `tools.py`) — `ctx` is not threaded through `**kwargs`.
+- **The `ctx` is captured once at `register()` time** and stashed in a module global in `tmux_tools.py`. If you add a new handler, call `_ctx_or_none()` (or the helpers in `tmux_tools.py`) — `ctx` is not threaded through `**kwargs`.
 - **Don't add `pre_tool_call` or `post_tool_call` hooks** that auto-capture every `terminal()` call. That's the "tmux backend" we explicitly decided against. The model should opt in by calling `tmux_capture`.
 - **Don't add a `tmux_kill` tool** without checking with the user. Lifecycle in human hands is the point.
 - **The plugin does NOT install tmux.** It assumes tmux is on PATH. Don't try to lazy-install; the system might not be using tmux at all.
-- **Long-lived sessions hold stale tool definitions.** After editing `tools.py` or `schemas.py`, the user has to restart the TUI to reload the plugin. The smoke test exercises the on-disk code; live tool calls reflect the registered copy at session start.
+- **Long-lived sessions hold stale tool definitions.** After editing `tmux_tools.py` or `schemas.py`, the user has to restart the TUI to reload the plugin. The smoke test exercises the on-disk code; live tool calls reflect the registered copy at session start.
 
 ## Test plan
 

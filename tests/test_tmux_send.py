@@ -15,7 +15,7 @@ import json
 import subprocess
 import time
 
-import tools
+import tmux_tools
 
 from .conftest import tmux_send
 
@@ -25,7 +25,7 @@ def test_send_text_default_submit(sock: str) -> None:
     tmux_send(sock, "%0", "Enter")  # flush any prior prompt noise
     time.sleep(0.2)
     r = json.loads(
-        tools.tmux_send_handler({"pane": "%0", "text": "echo ok"})
+        tmux_tools.tmux_send_handler({"pane": "%0", "text": "echo ok"})
     )
     assert r["pane_id"] == "%0"
     assert r["mode"] == "text"
@@ -33,14 +33,14 @@ def test_send_text_default_submit(sock: str) -> None:
     assert r["submit"] is True
     assert r["status"] == "ok"
     time.sleep(0.3)
-    captured = json.loads(tools.tmux_capture_handler({"pane": "%0", "lines": 30}))
+    captured = json.loads(tmux_tools.tmux_capture_handler({"pane": "%0", "lines": 30}))
     assert "ok" in captured["text"]
 
 
 def test_send_keys_mode(sock: str) -> None:
     """``keys=["C-c"]`` sends the named key without literal interpretation."""
     r = json.loads(
-        tools.tmux_send_handler({"pane": "%0", "keys": ["C-c"]})
+        tmux_tools.tmux_send_handler({"pane": "%0", "keys": ["C-c"]})
     )
     assert r["pane_id"] == "%0"
     assert r["mode"] == "keys"
@@ -55,13 +55,13 @@ def test_send_text_submit_false(sock: str) -> None:
     tmux_send(sock, "%0", "Enter")
     time.sleep(0.2)
     r = json.loads(
-        tools.tmux_send_handler(
+        tmux_tools.tmux_send_handler(
             {"pane": "%0", "text": "echo unfinished", "submit": False}
         )
     )
     assert r["submit"] is False
     time.sleep(0.3)
-    captured = json.loads(tools.tmux_capture_handler({"pane": "%0", "lines": 20}))
+    captured = json.loads(tmux_tools.tmux_capture_handler({"pane": "%0", "lines": 20}))
     assert "unfinished" in captured["text"]
 
 
@@ -76,7 +76,7 @@ def test_send_validation_rejects_bad_shape(sock: str) -> None:
         ({"pane": "%0", "keys": ["Enter", "-N"]}, "must not start with '-'"),
     ]
     for args, expected_substr in cases:
-        r = json.loads(tools.tmux_send_handler(args))
+        r = json.loads(tmux_tools.tmux_send_handler(args))
         assert "error" in r and expected_substr in r["error"], (
             f"missing/error mismatch for {args}: {r}"
         )
@@ -85,26 +85,26 @@ def test_send_validation_rejects_bad_shape(sock: str) -> None:
 def test_send_self_pane_guard(sock: str) -> None:
     """Sending to the agent's own pane (the smoke server's only pane) is rejected."""
     # Simulate the agent being in the smoke server's pane.
-    tools.set_self_pane("%0")
+    tmux_tools.set_self_pane("%0")
     try:
         r_text = json.loads(
-            tools.tmux_send_handler({"pane": "%0", "text": "should-not-run"})
+            tmux_tools.tmux_send_handler({"pane": "%0", "text": "should-not-run"})
         )
         assert "refusing to send to own pane" in r_text["error"]
         r_keys = json.loads(
-            tools.tmux_send_handler({"pane": "%0", "keys": ["C-c"]})
+            tmux_tools.tmux_send_handler({"pane": "%0", "keys": ["C-c"]})
         )
         assert "refusing to send to own pane" in r_keys["error"]
         # Clearing the guard re-enables sends.
-        tools.set_self_pane(None)
+        tmux_tools.set_self_pane(None)
         r_ok = json.loads(
-            tools.tmux_send_handler({"pane": "%0", "text": "echo ok", "submit": False})
+            tmux_tools.tmux_send_handler({"pane": "%0", "text": "echo ok", "submit": False})
         )
         assert r_ok["status"] == "ok"
         tmux_send(sock, "%0", "Enter")
         time.sleep(0.2)
     finally:
-        tools.set_self_pane(None)
+        tmux_tools.set_self_pane(None)
 
 
 def test_send_post_send_capture(sock: str) -> None:
@@ -118,7 +118,7 @@ def test_send_post_send_capture(sock: str) -> None:
     marker = "POST-SEND-MARKER-14a"
     tmux_send(sock, "%0", "-l", f"echo {marker}")
     tmux_send(sock, "%0", "Enter")
-    r = json.loads(tools.tmux_send_handler({"pane": "%0", "text": f"echo {marker}"}))
+    r = json.loads(tmux_tools.tmux_send_handler({"pane": "%0", "text": f"echo {marker}"}))
     assert "post_send_capture" in r
     assert isinstance(r["post_send_capture"], str)
     assert marker in r["post_send_capture"]
@@ -129,28 +129,28 @@ def test_send_post_send_capture(sock: str) -> None:
     # post-send capture works for the keys branch.
     marker_b = "POST-SEND-MARKER-14b"
     # First put a command in history via text mode.
-    tools.tmux_send_handler({"pane": "%0", "text": f"echo {marker_b}"})
+    tmux_tools.tmux_send_handler({"pane": "%0", "text": f"echo {marker_b}"})
     time.sleep(0.3)
     # Now send Up + Enter via keys mode to re-run it.
     r = json.loads(
-        tools.tmux_send_handler({"pane": "%0", "keys": ["Up", "Enter"]})
+        tmux_tools.tmux_send_handler({"pane": "%0", "keys": ["Up", "Enter"]})
     )
     assert "post_send_capture" in r
     assert marker_b in r["post_send_capture"]
 
     # 14c: error envelope has no field.
-    bad = json.loads(tools.tmux_send_handler({"pane": "%0"}))
+    bad = json.loads(tmux_tools.tmux_send_handler({"pane": "%0"}))
     assert "error" in bad and "post_send_capture" not in bad
 
     # 14d: self-pane rejection is fast (no 100ms tail).
-    tools.set_self_pane("%0")
+    tmux_tools.set_self_pane("%0")
     try:
         t0 = time.monotonic()
         rejected = json.loads(
-            tools.tmux_send_handler({"pane": "%0", "text": "should-not-run"})
+            tmux_tools.tmux_send_handler({"pane": "%0", "text": "should-not-run"})
         )
         wall = time.monotonic() - t0
         assert "error" in rejected and "post_send_capture" not in rejected
         assert wall < 0.05, f"self-pane rejection took {wall*1000:.0f}ms"
     finally:
-        tools.set_self_pane(None)
+        tmux_tools.set_self_pane(None)

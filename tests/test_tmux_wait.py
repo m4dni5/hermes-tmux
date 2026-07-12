@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import time
 
-import tools
+import tmux_tools
 
 from .conftest import tmux_send
 
@@ -23,7 +23,7 @@ def test_wait_pattern_appears(sock: str) -> None:
     tmux_send(sock, "%0", "-l", f"echo {marker}")
     tmux_send(sock, "%0", "Enter")
     r = json.loads(
-        tools.tmux_wait_handler({"pane": "%0", "pattern": marker, "timeout": 5})
+        tmux_tools.tmux_wait_handler({"pane": "%0", "pattern": marker, "timeout": 5})
     )
     assert r["matched"] is True
     assert marker in r["text"]
@@ -35,7 +35,7 @@ def test_wait_pattern_times_out(sock: str) -> None:
     """A pattern that never appears returns matched: false with the timeout elapsed."""
     t0 = time.monotonic()
     r = json.loads(
-        tools.tmux_wait_handler(
+        tmux_tools.tmux_wait_handler(
             {"pane": "%0", "pattern": "DEFINITELY-NOT-IN-PANE-13b", "timeout": 2}
         )
     )
@@ -49,9 +49,9 @@ def test_wait_pattern_times_out(sock: str) -> None:
 
 def test_wait_validation(sock: str) -> None:
     """Missing pane and empty pattern return error envelopes."""
-    bad_pane = json.loads(tools.tmux_wait_handler({"pattern": "x", "pane": ""}))
+    bad_pane = json.loads(tmux_tools.tmux_wait_handler({"pattern": "x", "pane": ""}))
     assert "error" in bad_pane and "pane is required" in bad_pane["error"]
-    bad_pattern = json.loads(tools.tmux_wait_handler({"pane": "%0", "pattern": ""}))
+    bad_pattern = json.loads(tmux_tools.tmux_wait_handler({"pane": "%0", "pattern": ""}))
     assert "error" in bad_pattern and "pattern" in bad_pattern["error"]
 
 
@@ -59,7 +59,7 @@ def test_wait_timeout_clamping(sock: str) -> None:
     """``timeout: 0`` clamps to 1 second (avoids the Python ``0 or 10`` gotcha)."""
     t0 = time.monotonic()
     r = json.loads(
-        tools.tmux_wait_handler(
+        tmux_tools.tmux_wait_handler(
             {"pane": "%0", "pattern": "DEFINITELY-NOT-IN-PANE-13d", "timeout": 0}
         )
     )

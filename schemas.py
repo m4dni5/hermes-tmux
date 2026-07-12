@@ -4,7 +4,7 @@ The descriptions here are what the model reads to decide how to call each
 tool. They are intentionally short: one or two sentences on function,
 one or two on each parameter. Defaults are stated in the parameter
 descriptions, not in prose. Anything that doesn't change a call site
-(flag trivia, manpage gotchas, chaining recipes) lives in tools.py
+(flag trivia, manpage gotchas, chaining recipes) lives in tmux_tools.py
 comments, not here. Per the plugin's design (see AGENTS.md), this is
 where the documentation lives — the tool schemas replace what a
 traditional skill would have carried.

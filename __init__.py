@@ -17,7 +17,7 @@ import os
 import shutil
 
 import schemas
-import tools
+import tmux_tools
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 #
 # Plugin tool handlers are called by the framework with ``(args, **kw)``
 # but ``ctx`` is NOT threaded through. It's only available inside
-# ``register(ctx)``. We stash it in tools.py at registration time so
+# ``register(ctx)``. We stash it in tmux_tools.py at registration time so
 # the handlers can route every tmux call through the framework's
 # pipelines (approval, redaction, interrupt).
 # --------------------------------------------------------------------
@@ -79,10 +79,10 @@ def _capture_self_socket() -> str | None:
 
 
 _TOOLS = (
-    ("tmux_list",    "tmux_list",    schemas.TMUX_LIST_SCHEMA,    tools.tmux_list_handler,    "📋"),
-    ("tmux_capture", "tmux_capture", schemas.TMUX_CAPTURE_SCHEMA, tools.tmux_capture_handler, "📜"),
-    ("tmux_send",    "tmux_send",    schemas.TMUX_SEND_SCHEMA,    tools.tmux_send_handler,    "⌨️"),
-    ("tmux_wait",    "tmux_wait",    schemas.TMUX_WAIT_SCHEMA,    tools.tmux_wait_handler,    "⏳"),
+    ("tmux_list",    "tmux_list",    schemas.TMUX_LIST_SCHEMA,    tmux_tools.tmux_list_handler,    "📋"),
+    ("tmux_capture", "tmux_capture", schemas.TMUX_CAPTURE_SCHEMA, tmux_tools.tmux_capture_handler, "📜"),
+    ("tmux_send",    "tmux_send",    schemas.TMUX_SEND_SCHEMA,    tmux_tools.tmux_send_handler,    "⌨️"),
+    ("tmux_wait",    "tmux_wait",    schemas.TMUX_WAIT_SCHEMA,    tmux_tools.tmux_wait_handler,    "⏳"),
 )
 
 
@@ -94,9 +94,9 @@ def register(ctx) -> None:
     at request time — when tmux isn't running, the model just doesn't
     see these tools.
     """
-    tools.set_ctx(ctx)
-    tools.set_self_pane(_capture_self_pane())
-    tools.set_self_socket(_capture_self_socket())
+    tmux_tools.set_ctx(ctx)
+    tmux_tools.set_self_pane(_capture_self_pane())
+    tmux_tools.set_self_socket(_capture_self_socket())
 
     for name, toolset, schema, handler, emoji in _TOOLS:
         try:

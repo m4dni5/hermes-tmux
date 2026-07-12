@@ -28,7 +28,7 @@ hermes-tmux/
 ├── plugin.yaml            # name, version, provides_tools
 ├── __init__.py            # register(ctx) — wires the 4 tools
 ├── schemas.py             # 4 tool schemas (what the model reads)
-├── tools.py               # 4 handlers (what runs)
+├── tmux_tools.py               # 4 handlers (what runs)
 ├── README.md
 ├── AGENTS.md
 ├── LICENSE

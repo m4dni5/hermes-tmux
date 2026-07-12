@@ -15,7 +15,7 @@ import subprocess
 import time
 from pathlib import Path
 
-import tools
+import tmux_tools
 
 from .conftest import tmux_send
 
@@ -26,7 +26,7 @@ def test_capture_default_returns_visible(sock: str) -> None:
     tmux_send(sock, "%0", "Enter")
     time.sleep(0.8)
 
-    result = json.loads(tools.tmux_capture_handler({"pane": "%0", "lines": 50}))
+    result = json.loads(tmux_tools.tmux_capture_handler({"pane": "%0", "lines": 50}))
     assert "hello-from-tmux-plugin" in result["text"]
     assert result["pane_id"] == "%0"
     # Fast path: when the input is a %pane_id and the agent is inside
@@ -41,14 +41,14 @@ def test_capture_accepts_bare_session_name(sock: str) -> None:
     tmux_send(sock, "%0", "Enter")
     time.sleep(0.5)
 
-    result = json.loads(tools.tmux_capture_handler({"pane": "test", "lines": 30}))
+    result = json.loads(tmux_tools.tmux_capture_handler({"pane": "test", "lines": 30}))
     assert result["pane_id"] == "%0"
     assert "resolution-test" in result["text"]
 
 
 def test_capture_nonexistent_target(sock: str) -> None:
     """A target that doesn't resolve returns a clean error envelope."""
-    result = json.loads(tools.tmux_capture_handler({"pane": "no-such-session"}))
+    result = json.loads(tmux_tools.tmux_capture_handler({"pane": "no-such-session"}))
     assert "error" in result
 
 
@@ -59,7 +59,7 @@ def test_capture_strips_ansi(sock: str) -> None:
         check=True,
     )
     ansi_pane = next(
-        p for p in json.loads(tools.tmux_list_handler({}))["panes"]
+        p for p in json.loads(tmux_tools.tmux_list_handler({}))["panes"]
         if p["window_name"] == "ansi"
     )
     tmux_send(sock, ansi_pane["pane_id"], "-l", "printf '\\033[31mRED\\033[0m\\n'")
@@ -67,7 +67,7 @@ def test_capture_strips_ansi(sock: str) -> None:
     time.sleep(0.5)
 
     captured = json.loads(
-        tools.tmux_capture_handler({"pane": ansi_pane["pane_id"], "lines": 30})
+        tmux_tools.tmux_capture_handler({"pane": ansi_pane["pane_id"], "lines": 30})
     )
     assert "\x1b" not in captured["text"]
     assert "RED" in captured["text"]
@@ -76,13 +76,13 @@ def test_capture_strips_ansi(sock: str) -> None:
 def test_capture_include_normal_scrollback_param(sock: str) -> None:
     """The ``include_normal_scrollback: true`` path is accepted and returns cleanly."""
     # Reuse the ansi pane from the prior test, or the bash pane if not present.
-    panes = json.loads(tools.tmux_list_handler({}))["panes"]
+    panes = json.loads(tmux_tools.tmux_list_handler({}))["panes"]
     target = next(
         (p for p in panes if p["window_name"] == "ansi"),
         panes[0],
     )
     result = json.loads(
-        tools.tmux_capture_handler(
+        tmux_tools.tmux_capture_handler(
             {"pane": target["pane_id"], "lines": 5, "include_normal_scrollback": True}
         )
     )
@@ -104,7 +104,7 @@ def test_capture_alt_screen_vs_normal_scrollback(sock: str) -> None:
         check=True,
     )
     vim_pane = next(
-        p for p in json.loads(tools.tmux_list_handler({}))["panes"]
+        p for p in json.loads(tmux_tools.tmux_list_handler({}))["panes"]
         if p["window_name"] == "vimwin"
     )
     # Drop into vim on this test file. tmux's send-keys joins its
@@ -124,9 +124,9 @@ def test_capture_alt_screen_vs_normal_scrollback(sock: str) -> None:
     )
     assert status.stdout.strip() == "1"
 
-    alt = json.loads(tools.tmux_capture_handler({"pane": vim_pane["pane_id"], "lines": 100}))
+    alt = json.loads(tmux_tools.tmux_capture_handler({"pane": vim_pane["pane_id"], "lines": 100}))
     normal = json.loads(
-        tools.tmux_capture_handler(
+        tmux_tools.tmux_capture_handler(
             {"pane": vim_pane["pane_id"], "lines": 100, "include_normal_scrollback": True}
         )
     )
