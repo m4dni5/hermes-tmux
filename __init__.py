@@ -112,3 +112,14 @@ def register(ctx) -> None:
             # Don't take down the whole plugin on a single registration
             # failure. Log and move on so the other tools can still load.
             logger.warning("tmux plugin: failed to register %s: %s", name, exc)
+
+    try:
+        ctx.register_command(
+            "pane",
+            tmux_tools._pane_command_handler,
+            description="Share a tmux pane's contents with the agent so "
+                        "it can incorporate that context before responding",
+            args_hint="[window.pane] [hint]",
+        )
+    except Exception as exc:
+        logger.warning("tmux plugin: failed to register /pane command: %s", exc)

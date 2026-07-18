@@ -41,10 +41,13 @@ class FakeCtx:
 
     Bypasses the framework's terminal pipeline and runs tmux directly.
     Same return envelope as the real ctx.dispatch_tool("terminal", ...).
+
+    Tracks injected messages (from ctx.inject_message) in
+    ``_injected`` so tests can assert on what ``/pane`` injected.
     """
 
     def __init__(self) -> None:
-        pass
+        self._injected: list[dict[str, str]] = []
 
     def dispatch_tool(self, name: str, args: dict) -> str:
         full = shlex.split(args["command"])
@@ -54,6 +57,10 @@ class FakeCtx:
             "exit_code": r.returncode,
             "error": r.stderr if r.returncode != 0 else None,
         })
+
+    def inject_message(self, content: str, role: str = "user") -> bool:
+        self._injected.append({"content": content, "role": role})
+        return True
 
 
 @pytest.fixture(scope="module")
@@ -131,3 +138,17 @@ def tmux_send(sock: str, pane: str, *args: str) -> None:
     stays out of the plugin's handlers (so the tests can verify the
     post-send state, not just the send call)."""
     subprocess.run(["tmux", "-L", sock, "send-keys", "-t", pane, *args], check=True)
+
+
+@pytest.fixture
+def fake_ctx() -> Iterator[FakeCtx]:
+    """Return the FakeCtx wired into tmux_tools, with _injected cleared."""
+    ctx = tmux_tools._ctx
+    assert isinstance(ctx, FakeCtx), (
+        "fake_ctx fixture requires FakeCtx — "
+        "did a test overwrite set_ctx?"
+    )
+    ctx._injected.clear()
+    # Clear _last_pane so tests start from a known state.
+    tmux_tools._last_pane = None
+    yield ctx

@@ -150,10 +150,11 @@ TMUX_SEND_SCHEMA = {
 TMUX_WAIT_SCHEMA = {
     "name": "tmux_wait",
     "description": (
-        "Wait for a substring to appear in a tmux pane, or time out. "
-        "Returns a 5-line status hint on both paths so the agent can "
-        "decide whether to call `tmux_capture`, send more input, or "
-        "give up."
+        "Wait for a substring or regex to appear in a tmux pane, or "
+        "time out. Returns the last ~30 lines on both paths so the "
+        "agent can decide whether to call `tmux_capture`, send more "
+        "input, or give up. Set `async: true` to return immediately "
+        "and receive the result as a follow-up message."
     ),
     "parameters": {
         "type": "object",
@@ -168,9 +169,10 @@ TMUX_WAIT_SCHEMA = {
             "pattern": {
                 "type": "string",
                 "description": (
-                    "Substring to look for in the captured scrollback. "
-                    "Matched against the last 5 lines of the pane on "
-                    "each poll."
+                    "String to look for in the captured scrollback. "
+                    "Substring match by default; set `regex: true` for "
+                    "a Python-flavor regex. Matched against the last "
+                    "~30 lines of the pane on each poll."
                 ),
             },
             "timeout": {
@@ -182,6 +184,24 @@ TMUX_WAIT_SCHEMA = {
                 "minimum": 1,
                 "maximum": 60,
                 "default": 10,
+            },
+            "regex": {
+                "type": "boolean",
+                "description": (
+                    "Treat `pattern` as a Python regex instead of a "
+                    "literal substring. Default false."
+                ),
+                "default": False,
+            },
+            "async": {
+                "type": "boolean",
+                "description": (
+                    "Return immediately instead of blocking. The "
+                    "result (match or timeout) is delivered as a "
+                    "follow-up message when the wait finishes. "
+                    "Default false."
+                ),
+                "default": False,
             },
         },
         "required": ["pane", "pattern"],

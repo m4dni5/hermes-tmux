@@ -23,6 +23,7 @@ import json
 import logging
 import re
 import shlex
+import textwrap
 import time
 from typing import Any, Dict, Optional
 
@@ -35,10 +36,12 @@ _DEFAULT_CAPTURE_LINES = 200
 # tmux list/capture/send are all fast. 10s leaves headroom for slow shells.
 _TMUX_TIMEOUT = 10
 
-# tmux_wait: bake-in constants. 5 lines is a status hint, not a full read.
-# The agent's expected follow-up is tmux_capture(pane, lines=N) for the
-# full scrollback; tmux_wait exists to *decide* whether to call that.
-_WAIT_LINES = 5
+# tmux_wait: bake-in constants. 30 lines is a status hint — enough to catch
+# patterns that scrolled past a tighter window between polls, and enough
+# context on timeout for the agent to diagnose why the pattern didn't
+# appear. Not a full read — the expected follow-up is still
+# tmux_capture(pane, lines=N) for the full scrollback.
+_WAIT_LINES = 30
 _WAIT_POLL_INTERVAL_S = 0.1
 # Per-poll capture timeout. Should be small (the poll is bounded by the
 # outer timeout) but enough for a slow shell to respond.
@@ -53,6 +56,11 @@ _WAIT_CAPTURE_TIMEOUT = 3
 # buys the win case; not exposed as a parameter.
 _POST_SEND_TAIL_S = 0.1
 _POST_SEND_LINES = 5
+
+# Track the most recent pane the agent captured from or sent to, so
+# ``/pane`` (no argument) defaults to the pane the agent was last
+# interacting with. Resolved ``%pane_id``, not user-facing target.
+_last_pane: Optional[str] = None
 
 # --------------------------------------------------------------------
 # PluginContext handle
@@ -322,6 +330,9 @@ def tmux_capture_handler(args: Dict[str, Any], **kwargs) -> str:
     target = resolved["target"]
     socket = resolved.get("socket")
 
+    global _last_pane
+    _last_pane = pane_id
+
     text = _capture_text(pane_id, socket, lines, include_normal=include_normal)
     if isinstance(text, dict) and "error" in text:
         return json.dumps(text)
@@ -348,7 +359,7 @@ def _capture_text(
 
     Shared by ``tmux_capture_handler`` (which exposes lines + include_normal
     to the agent) and ``tmux_wait_handler`` (which polls the same flow with
-    a fixed 5-line window). Returns the captured text on success, or
+    a fixed window). Returns the captured text on success, or
     ``{"error": ...}`` on failure — the caller decides how to surface it.
     """
     # tmux capture-pane flag semantics (tmux 3.5a, confirmed empirically):
@@ -433,6 +444,9 @@ def tmux_send_handler(args: Dict[str, Any], **kwargs) -> str:
     target = resolved["target"]
     socket = resolved.get("socket")
 
+    global _last_pane
+    _last_pane = pane_id
+
     # Self-pane guard: refuse to send into the agent's own pane. The
     # check is post-resolution so any target format (``%12``,
     # ``session:window.pane``, bare window name, etc.) that resolves
@@ -512,44 +526,105 @@ def tmux_send_handler(args: Dict[str, Any], **kwargs) -> str:
 # ---------------------------------------------------------------------------
 # tmux_wait
 #
-# Replaces the agent's implicit ``sleep N`` between ``tmux_send`` and
-# ``tmux_capture`` with a deterministic wait. Polls the captured text
-# for a substring (not regex — keeps the schema simple and the model
-# honest about what it's matching) and returns when the pattern appears
-# or the timeout fires.
+# Polls the captured text for a substring or regex and returns when the
+# pattern appears or the timeout fires. Two modes:
+#
+#   async=false (default) — blocking.  The agent waits and gets the
+#       result inline, same as a regular tool call.
+#   async=true — non-blocking.  The handler spawns a background
+#       Python process that polls the pane and prints a JSON result
+#       when done.  The framework delivers it as a follow-up message.
+#       The agent can continue other work in the meantime.
 #
 # Why polling instead of ``tmux wait-for``:
 #   - ``wait-for`` requires the *command itself* to participate in the
 #     sync (``cmd; tmux wait-for -S done``), which couples every
-#     command the agent drives to the sync pattern. The reverse shell,
-#     the exploit, the server log — none of them know about tmux.
+#     command the agent drives to the sync pattern.
 #   - Polling is the black-box version: works with anything that
 #     produces text in a pane, no command-side cooperation needed.
 #
-# Why a 5-line status hint (not the full capture):
-#   - The agent's follow-up to a match is usually "now do the next
-#     thing" (send the next command, read more, give up). Five lines
-#     is enough to see "the prompt is back" or "an error appeared."
-#   - The agent's follow-up to a timeout is "what's the pane doing?"
-#     Same five lines answer that.
-#   - If the agent wants more, ``tmux_capture(pane, lines=200)`` is
-#     one call. ``tmux_wait`` is a *decision tool*, not a read tool.
+# The response always includes the last ``_WAIT_LINES`` lines so the
+# agent can decide what to do next — ``tmux_capture`` for full output,
+# send more input, or give up.  ``tmux_wait`` is a *decision tool*, not
+# a read tool.
 # ---------------------------------------------------------------------------
 
+
+_ASYNC_POLL_SCRIPT = textwrap.dedent("""\
+import json, re, subprocess, sys, time
+pane_id = sys.argv[1]
+pattern = sys.argv[2]
+timeout_s = int(sys.argv[3])
+use_regex = sys.argv[4] == '1'
+lines = int(sys.argv[5])
+
+# Build the tmux command.  Extra args (socket -L flag) may trail the
+# positional arguments — they are passed as raw tmux argv fragments.
+tmux_cmd = ['tmux']
+if len(sys.argv) > 6 and sys.argv[6]:
+    tmux_cmd.extend(sys.argv[6:])
+tmux_cmd.extend(['capture-pane', '-p', '-J', '-q', '-t', pane_id,
+                  '-S', f'-{lines}'])
+
+started = time.monotonic()
+deadline = started + timeout_s
+while True:
+    r = subprocess.run(tmux_cmd, capture_output=True, text=True, timeout=3)
+    text = r.stdout.rstrip('\\n')
+    if use_regex:
+        try:
+            matched = bool(re.search(pattern, text, re.DOTALL))
+        except re.error as exc:
+            print(json.dumps({'error': f'invalid regex: {exc}'}))
+            sys.exit(1)
+    else:
+        matched = pattern in text
+    if matched:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        print(json.dumps({
+            'pane_id': pane_id, 'pattern': pattern,
+            'regex': use_regex, 'matched': True,
+            'elapsed_ms': elapsed_ms, 'text': text,
+        }))
+        sys.exit(0)
+    if time.monotonic() >= deadline:
+        elapsed_ms = timeout_s * 1000
+        print(json.dumps({
+            'pane_id': pane_id, 'pattern': pattern,
+            'regex': use_regex, 'matched': False,
+            'elapsed_ms': elapsed_ms, 'text': text,
+        }))
+        sys.exit(0)
+    time.sleep(0.1)
+""")
+
+
 def tmux_wait_handler(args: Dict[str, Any], **kwargs) -> str:
-    """Wait for a substring to appear in a tmux pane, or time out."""
+    """Wait for a substring or regex to appear in a tmux pane, or time out."""
     pane_ref = (args.get("pane") or "").strip()
     if not pane_ref:
         return json.dumps({"error": "pane is required"})
 
     pattern = args.get("pattern")
     if not isinstance(pattern, str) or not pattern:
-        return json.dumps({"error": "pattern is required and must be a non-empty string"})
+        return json.dumps(
+            {"error": "pattern is required and must be a non-empty string"}
+        )
 
-    # Resolve timeout. ``args.get("timeout")`` can be: missing (None →
-    # use default 10), an int/float, or a string. The explicit-or-10
-    # pattern would silently rewrite a user-supplied 0 to 10 (because
-    # ``0 or 10`` is ``10`` in Python), so we check for None separately.
+    use_regex = bool(args.get("regex", False))
+    use_async = bool(args.get("async", False))
+
+    # Validate regex early (before spawning) so the agent gets a clean
+    # error inline rather than a cryptic background failure.
+    if use_regex:
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            return json.dumps(
+                {"error": f"invalid regex pattern: {exc}"}
+            )
+
+    # Resolve timeout.
     raw_timeout = args.get("timeout")
     if raw_timeout is None:
         timeout_s = 10
@@ -557,7 +632,9 @@ def tmux_wait_handler(args: Dict[str, Any], **kwargs) -> str:
         try:
             timeout_s = int(raw_timeout)
         except (TypeError, ValueError):
-            return json.dumps({"error": f"timeout must be an integer (got {raw_timeout!r})"})
+            return json.dumps(
+                {"error": f"timeout must be an integer (got {raw_timeout!r})"}
+            )
     if timeout_s < 1:
         timeout_s = 1
     if timeout_s > 60:
@@ -570,49 +647,183 @@ def tmux_wait_handler(args: Dict[str, Any], **kwargs) -> str:
     target = resolved["target"]
     socket = resolved.get("socket")
 
-    # Polling loop. We start with a poll at t=0 (no point waiting first),
-    # then sleep _WAIT_POLL_INTERVAL_S between polls. ``time.monotonic``
-    # is wall-clock-immune and monotonic, so the timeout is correct
-    # under NTP corrections and DST.
+    if use_async:
+        # Build a background command: python3 -c '<script>' <args...>
+        # shlex-quote every user-provided value so shell metacharacters
+        # in the pattern don't escape the quoting.
+        socket_args: list[str] = []
+        if socket and socket != _self_socket_or_none():
+            socket_args = ["-L", socket]
+        background_cmd = (
+            "python3 -c "
+            + shlex.quote(_ASYNC_POLL_SCRIPT)
+            + " "
+            + shlex.quote(pane_id)
+            + " "
+            + shlex.quote(pattern)
+            + " "
+            + str(timeout_s)
+            + " "
+            + ("1" if use_regex else "0")
+            + " "
+            + str(_WAIT_LINES)
+            + " "
+            + shlex.join(socket_args)
+        )
+        ctx = _ctx_or_none()
+        if ctx is None:
+            return json.dumps({"error": "PluginContext not initialized"})
+        # Fire-and-forget.  The framework delivers the process stdout
+        # as a follow-up message when it exits.
+        ctx.dispatch_tool(
+            "terminal",
+            {
+                "command": background_cmd,
+                "timeout": timeout_s + 15,  # headroom over the poll deadline
+                "background": True,
+                "notify_on_complete": True,
+            },
+        )
+        return json.dumps(
+            {
+                "status": "watching",
+                "pane_id": pane_id,
+                "target": target,
+                "pattern": pattern,
+                "regex": use_regex,
+                "timeout_s": timeout_s,
+            }
+        )
+
+    # --- blocking path (async=false) -----------------------------------------
+
+    # Polling loop.  We start with a poll at t=0 (no point waiting
+    # first), then sleep _WAIT_POLL_INTERVAL_S between polls.
     started = time.monotonic()
     deadline = started + timeout_s
     last_text = ""
 
     while True:
         text = _capture_text(
-            pane_id, socket, _WAIT_LINES,
-            include_normal=False, timeout=_WAIT_CAPTURE_TIMEOUT,
+            pane_id,
+            socket,
+            _WAIT_LINES,
+            include_normal=False,
+            timeout=_WAIT_CAPTURE_TIMEOUT,
         )
         if isinstance(text, dict) and "error" in text:
-            # Capture itself failed (pane gone, server down). Surface
-            # the error rather than silently returning a stale hint.
-            return json.dumps({
-                **text,
-                "pane_id": pane_id,
-                "target": target,
-                "pattern": pattern,
-            })
+            return json.dumps(
+                {
+                    **text,
+                    "pane_id": pane_id,
+                    "target": target,
+                    "pattern": pattern,
+                    "regex": use_regex,
+                }
+            )
         last_text = text
 
-        if pattern in text:
+        if use_regex:
+            matched = bool(re.search(pattern, text, re.DOTALL))
+        else:
+            matched = pattern in text
+
+        if matched:
             elapsed_ms = int((time.monotonic() - started) * 1000)
-            return json.dumps({
-                "pane_id": pane_id,
-                "target": target,
-                "pattern": pattern,
-                "matched": True,
-                "elapsed_ms": elapsed_ms,
-                "text": text,
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "pane_id": pane_id,
+                    "target": target,
+                    "pattern": pattern,
+                    "regex": use_regex,
+                    "matched": True,
+                    "elapsed_ms": elapsed_ms,
+                    "text": text,
+                },
+                ensure_ascii=False,
+            )
 
         if time.monotonic() >= deadline:
-            return json.dumps({
-                "pane_id": pane_id,
-                "target": target,
-                "pattern": pattern,
-                "matched": False,
-                "elapsed_ms": timeout_s * 1000,
-                "text": last_text,
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "pane_id": pane_id,
+                    "target": target,
+                    "pattern": pattern,
+                    "regex": use_regex,
+                    "matched": False,
+                    "elapsed_ms": timeout_s * 1000,
+                    "text": last_text,
+                },
+                ensure_ascii=False,
+            )
 
         time.sleep(_WAIT_POLL_INTERVAL_S)
+
+
+# ---------------------------------------------------------------------------
+# /pane slash command — user-driven pane context injection
+# ---------------------------------------------------------------------------
+
+
+def _pane_command_handler(raw_args: str) -> str | None:
+    """Handle ``/pane [target] [hint]`` — capture pane content and inject
+    it as a user message so the agent incorporates it before responding.
+
+    The user drives this; it's not automatic.  ``target`` is any format
+    tmux accepts (``%pane_id``, ``window.pane``, window name, etc.).
+    ``hint`` is an optional string telling the agent what to pay
+    attention to (e.g. ``/pane 2.0 nmap scan output``).  With no
+    arguments, defaults to the most recent pane the agent interacted
+    with — the one it last captured from or sent to.
+    """
+    raw_args = raw_args.strip()
+
+    # Parse: first whitespace-delimited token is the target; everything
+    # after it (including additional spaces) is the hint.
+    if raw_args:
+        parts = raw_args.split(maxsplit=1)
+        target = parts[0]
+        hint = parts[1] if len(parts) > 1 else ""
+    else:
+        target = ""
+        hint = ""
+
+    if not target:
+        global _last_pane
+        if _last_pane:
+            target = _last_pane
+        else:
+            return (
+                "No pane target.  Use /pane <window.pane> (e.g. /pane 2.0)"
+                " or /pane <window> (e.g. /pane nc)."
+            )
+
+    resolved = _resolve_pane_id(target)
+    if "error" in resolved:
+        return resolved["error"]
+
+    pane_id = resolved["pane_id"]
+    resolved_target = resolved["target"]
+    socket = resolved.get("socket")
+
+    text = _capture_text(pane_id, socket, _DEFAULT_CAPTURE_LINES)
+    if isinstance(text, dict) and "error" in text:
+        return text["error"]
+
+    # Frame the content so the model knows this is observational data
+    # the user is sharing — not a command to execute.
+    header = f"[pane {resolved_target} ({pane_id})"
+    if hint:
+        header += f": {hint}"
+    header += "]"
+    message = f"{header}\n\n```\n{text}\n```"
+
+    ctx = _ctx_or_none()
+    if ctx is None:
+        return "Plugin context not initialized."
+    ok = ctx.inject_message(message, role="user")
+    if not ok:
+        return "Failed to inject pane content (no CLI reference)."
+
+    # None = handled silently — the injected message starts the agent's turn.
+    return None
