@@ -57,11 +57,6 @@ _WAIT_CAPTURE_TIMEOUT = 3
 _POST_SEND_TAIL_S = 0.1
 _POST_SEND_LINES = 5
 
-# Track the most recent pane the agent captured from or sent to, so
-# ``/pane`` (no argument) defaults to the pane the agent was last
-# interacting with. Resolved ``%pane_id``, not user-facing target.
-_last_pane: Optional[str] = None
-
 # --------------------------------------------------------------------
 # PluginContext handle
 #
@@ -330,9 +325,6 @@ def tmux_capture_handler(args: Dict[str, Any], **kwargs) -> str:
     target = resolved["target"]
     socket = resolved.get("socket")
 
-    global _last_pane
-    _last_pane = pane_id
-
     text = _capture_text(pane_id, socket, lines, include_normal=include_normal)
     if isinstance(text, dict) and "error" in text:
         return json.dumps(text)
@@ -443,9 +435,6 @@ def tmux_send_handler(args: Dict[str, Any], **kwargs) -> str:
     pane_id = resolved["pane_id"]
     target = resolved["target"]
     socket = resolved.get("socket")
-
-    global _last_pane
-    _last_pane = pane_id
 
     # Self-pane guard: refuse to send into the agent's own pane. The
     # check is post-resolution so any target format (``%12``,
@@ -758,72 +747,3 @@ def tmux_wait_handler(args: Dict[str, Any], **kwargs) -> str:
             )
 
         time.sleep(_WAIT_POLL_INTERVAL_S)
-
-
-# ---------------------------------------------------------------------------
-# /pane slash command — user-driven pane context injection
-# ---------------------------------------------------------------------------
-
-
-def _pane_command_handler(raw_args: str) -> str | None:
-    """Handle ``/pane [target] [hint]`` — capture pane content and inject
-    it as a user message so the agent incorporates it before responding.
-
-    The user drives this; it's not automatic.  ``target`` is any format
-    tmux accepts (``%pane_id``, ``window.pane``, window name, etc.).
-    ``hint`` is an optional string telling the agent what to pay
-    attention to (e.g. ``/pane 2.0 nmap scan output``).  With no
-    arguments, defaults to the most recent pane the agent interacted
-    with — the one it last captured from or sent to.
-    """
-    raw_args = raw_args.strip()
-
-    # Parse: first whitespace-delimited token is the target; everything
-    # after it (including additional spaces) is the hint.
-    if raw_args:
-        parts = raw_args.split(maxsplit=1)
-        target = parts[0]
-        hint = parts[1] if len(parts) > 1 else ""
-    else:
-        target = ""
-        hint = ""
-
-    if not target:
-        global _last_pane
-        if _last_pane:
-            target = _last_pane
-        else:
-            return (
-                "No pane target.  Use /pane <window.pane> (e.g. /pane 2.0)"
-                " or /pane <window> (e.g. /pane nc)."
-            )
-
-    resolved = _resolve_pane_id(target)
-    if "error" in resolved:
-        return resolved["error"]
-
-    pane_id = resolved["pane_id"]
-    resolved_target = resolved["target"]
-    socket = resolved.get("socket")
-
-    text = _capture_text(pane_id, socket, _DEFAULT_CAPTURE_LINES)
-    if isinstance(text, dict) and "error" in text:
-        return text["error"]
-
-    # Frame the content so the model knows this is observational data
-    # the user is sharing — not a command to execute.
-    header = f"[pane {resolved_target} ({pane_id})"
-    if hint:
-        header += f": {hint}"
-    header += "]"
-    message = f"{header}\n\n```\n{text}\n```"
-
-    ctx = _ctx_or_none()
-    if ctx is None:
-        return "Plugin context not initialized."
-    ok = ctx.inject_message(message, role="user")
-    if not ok:
-        return "Failed to inject pane content (no CLI reference)."
-
-    # None = handled silently — the injected message starts the agent's turn.
-    return None

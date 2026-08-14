@@ -1,111 +1,318 @@
-# hermes-tmux — Agent Notes
+# Hermes Plugin Development — Agent Notes (Master Playbook)
 
-## What this is
+The distilled, project-agnostic playbook for building and maintaining Hermes
+Agent plugins. It is a synthesis of the lessons learned across three real
+plugins — `hermes-caido`, `hermes-recall`, and `hermes-tmux` — with their
+individual project specifics removed. **This file holds no project-specific
+content**; the rationale for *this* project lives in `DESIGN.md` at the repo
+root.
 
-A Hermes plugin exposing four tmux-related tools (`tmux_list`, `tmux_capture`, `tmux_send`, `tmux_wait`). The plugin is a thin wrapper over the `tmux` CLI, routed through the framework's `terminal` tool so all approval/redaction/interrupt semantics apply. There is no bundled skill — the tool schemas are the documentation.
+## The plugin surface
 
-## Architecture
+A Hermes plugin hooks into the agent through the registration capabilities on
+the `ctx` handed to `register(ctx)`:
+
+| Capability | API | What it adds |
+|---|---|---|
+| Tools | `ctx.register_tool(name, toolset, schema, handler, check_fn, emoji)` | Model-callable tools |
+| Hooks | `ctx.register_hook("post_tool_call", cb)` | Lifecycle events (pre/post LLM, session start/end, tool filter) |
+| Slash commands | `ctx.register_command(name, handler, description, args_hint)` | `/name` in CLI and gateway sessions |
+| CLI commands | `ctx.register_cli_command(name, help, setup_fn, handler_fn)` | `hermes <name> <subcommand>` from the terminal |
+| Auxiliary tasks | `ctx.register_auxiliary_task(key, defaults)` | Configurable sub-model task (`auxiliary.<key>` in config.yaml) |
+
+There is no subprocess substrate and no per-call execution model. Plugins do
+*not* shell out directly — they call the framework's existing tools via
+`ctx.dispatch_tool(name, args)`. That is the whole safety model: every
+dispatched call inherits the same approval, redaction, and interrupt pipelines
+as a direct tool call.
+
+**Slash commands** (`ctx.register_command`) take a `handler: Callable[[str],
+str | None]` — sync or async (the gateway awaits async handlers). The handler
+receives the raw argument string after the command name. To invoke a tool from
+a slash handler, use `ctx.dispatch_tool(...)` (parent-agent context wired up
+automatically); don't reach into framework internals. Conflicts with built-in
+commands are silently rejected with a warning — built-ins always win.
+
+**Overriding a built-in tool** (`ctx.register_tool(..., override=True)`) is a
+privileged capability: it needs the `tools.override` capability declared (and
+consented) plus `allow_tool_override: true` in config for non-bundled plugins.
+Prefer a non-conflicting tool name unless replacement is the explicit goal.
+
+**Group a plugin's tools under one toolset name.** Enabling/disabling a plugin
+is a per-toolset config change (`platform_toolsets.*`); registering each tool
+under its own toolset turns "enable the plugin" into an N-entry change that can
+drift. One `toolset` per plugin keeps enablement atomic. (This is a learned
+lesson — a plugin originally registered each tool under its own toolset and was
+refactored to a single one for exactly this reason.)
+
+## Plugin anatomy (flat directory plugin)
 
 ```
-register(ctx) ────► tmux_tools.set_ctx(ctx)    # stashed in tmux_tools.py module global
-                  └► ctx.register_tool    # × 4, gated on _tmux_available
-
-Tool handler ────► _ctx_or_none()         # reads stashed ctx
-              ───► _run_tmux(args)       # → ctx.dispatch_tool("terminal", ...)
-              ───► parses stdout → JSON
+plugin.yaml      # name, version, description, provides_tools, requires_env
+__init__.py      # register(ctx) — wires tools + commands
+schemas.py       # tool JSON schemas (what the model reads)
+tools.py         # handlers (what runs)  — the docs' canonical name
+pyproject.toml   # pytest config (pythonpath = ["."]) so tests import w/o pip install
+tests/
 ```
 
-The plugin is a flat directory plugin (importable from the project root
-after symlinking into the target profile's plugin directory). The framework's plugin loader
-discovers it via the symlink at `~/.hermes/profiles/<profile>/plugins/tmux`
-— that path is unchanged. The pip install makes the package importable
-in tests and from anywhere on the system Python, not just from the
-framework's runtime.
+- The loader imports `__init__.py` as a namespaced package
+  (`hermes_plugins.<name>`), so **relative imports** (`from . import schemas`)
+  resolve and the plugin never depends on cwd or `sys.path`.
+- pytest, by contrast, may import the root `__init__.py` as a bare module
+  (especially when the repo dir has a hyphen, which is invalid as a package
+  name, so it can't be `tests`' parent). That context has no parent package.
+  The standard fix is a `try: from . import schemas / except ImportError:
+  import schemas` in `__init__.py`. Both contexts are load-bearing — keep the
+  fallback.
+- `pyproject.toml` should add `.` to pytest's `pythonpath` so tests import the
+  package without a prior `pip install -e .`.
 
-The plugin never touches tmux directly — it always goes through `ctx.dispatch_tool("terminal", ...)`. This is what makes the plugin safe: every tmux call gets the same approval gating and redaction as a normal `terminal()` call.
+## The ctx capture pattern
 
-## Design decisions
+Tool handlers are called by the framework with `(args, **kwargs)` — **`ctx` is
+not threaded through**. It is only available inside `register(ctx)`. The
+standard pattern is to stash it in a module global at registration time and
+read it in handlers:
 
-**No `tmux_spawn`, no `tmux_kill`.** Lifecycle stays in human hands. A teardown tool would let the agent destroy its own observability mid-session. Spawn via `terminal("tmux new-window -n <name> '<command>'")` and grab the new pane's `%pane_id` from `tmux_list` — the agent can handle that from memory, and pinning it as a tool would lock the lifecycle into the agent's reach.
-
-**`tmux_wait` is a polling wait, not `tmux wait-for`.** The wait-for command requires the *command itself* to participate in the sync (`cmd; tmux wait-for -S done`), which couples every command the agent drives to the sync pattern — the reverse shell, the exploit, the server log don't know about tmux. Polling `tmux_capture` is the black-box version that works with anything producing text in a pane. The tool polls at 100ms and returns the last 30 lines on both match and timeout (so the agent can decide whether to call `tmux_capture` for full output, send more input, or give up). 30 lines is enough to catch patterns that scrolled past a tighter window between polls; still a *status hint* — the expected follow-up is `tmux_capture(pane, lines=N)` for the full scrollback.
-
-**`tmux_wait` supports regex matching and async mode.** Set `regex: true` to treat `pattern` as a Python regex (validated before any polling). Set `async: true` to return immediately with `status: "watching"` — the handler spawns a background Python process that polls the pane and the framework delivers the result as a follow-up message. The agent can continue other work while the wait runs. Invalid regex patterns are caught early (inline error, not a cryptic background failure).
-
-**`tmux_send` returns a 5-line post-send capture on every success.** After the send completes, the handler sleeps 100ms and runs the same `_capture_text` helper `tmux_wait` uses, attaching the result to the response as `post_send_capture`. For instant-return commands (`echo`, `pwd`, `ls`) the snapshot has the result and the agent can skip the explicit `tmux_capture` call. For slow commands (builds, server starts) the snapshot may be empty or partial and the agent falls through to `tmux_capture`. The 100ms tail and the 5-line cap are baked in (not parameters) for the same reason as `tmux_wait`'s hint: same shape, same follow-up. The field is always present on success (empty string if the capture itself failed — pane died mid-send); error envelopes don't include it.
-
-**Default-leave, no teardown by the agent.** Once a pane exists, the agent drives it but does not kill it. The user is watching the session; tearing it down mid-task is destructive without an explicit ask. If the agent needs the window back, ask first.
-
-**Self-pane guard on `tmux_send`.** The plugin captures `$TMUX_PANE` at register time and refuses to send into the agent's own pane — covers the mis-target case (stale `pane_id`, resolved-by-name target, etc.) where keystrokes would land in the agent's own input. Returns `{"error": "refusing to send to own pane (%N); use a different target"}`. Costs one env-var read and one equality check per call. No-op when the agent is outside tmux (the agent has no pane of its own; the tools are still available).
-
-**Each interactive session is a new named window.** Windows are stable; pane indexes shift when panes die. Pick a name that describes the session (`ssh-prod`, `revshell-app1`, `mysql-orders`) so `tmux_list(target="<name>")` finds it later.
-
-**`check_fn` gates on the `tmux` binary only.** Tools are visible whenever `tmux` is on PATH, including when the agent itself is outside any tmux session (driving a session from outside is supported).
-
-**Per-pane socket resolution (internal mechanism).** `_resolve_pane_id` queries the target's tmux server with `display-message -p '#{pane_id} ... #{socket_path}'` and returns the server name. `_run_tmux` adds `-L <name>` only when the resolved server differs from the agent's own (captured from `$TMUX` at register time). The agent never sees the socket; the resolution is automatic and only matters when the agent's `$TMUX` points at a server that doesn't match the default. This is the fix for the original `tmux_list_socket_mismatch` bug — when the agent is in server A and looks at a pane in server A, the tool queries server A.
-
-**Fast path for `%pane_id` inputs.** When the input already starts with `%` and the agent is inside tmux (`_self_socket` is non-None), `_resolve_pane_id` skips the `display-message` round-trip entirely — tmux accepts `%pane_id` as a target directly, and the agent's own socket is the default. The trade-off: the `target` field in the response is the bare `%pane_id` instead of `session:window.pane`. That's still a valid target for any subsequent call; the full form is available via `tmux_list` if the agent needs it.
-
-**Flag-injection guard on `tmux_send` keys mode.** The `keys` list is validated before being passed to `send-keys`. Tmux key names are alphanumeric (`Enter`, `C-c`, `BSpace`, `Up`, `Minus`, etc.) — no legitimate key name starts with `-`. A leading `-` would be interpreted as a tmux flag (`-l` for literal mode, `-N` for repeat count, `-X` for copy-mode commands) rather than as a key name. The guard rejects these with a clear error message pointing to `Minus` as the key name for the `-` character.
-
-**All tmux flags baked in.** `capture-pane -p -J -q` (default) and `capture-pane -p -J -a -q` (with `include_normal_scrollback: true`). `send-keys -l` + separate `Enter` key for sends. The schema descriptions are where the agent reads this; the parameters are not exposed.
-
-**Both target formats accepted.** `%pane_id` and `session:window.pane` both work. Internally normalized to `%pane_id` via `tmux display-message`. Response always echoes both so the model can chain calls.
-
-**ANSI always stripped.** The model almost never wants raw escape sequences. If it ever does, `terminal` with a raw `tmux capture-pane -e ...` is one call away.
-
-**`tmux_capture` default = alternate screen.** Confirmed empirically against tmux 3.5a: `capture-pane -p` (no `-a`) returns the TUI surface / visible pane contents, and `-a` returns the normal scrollback. The flag name is the opposite of what you might guess from the manpage's wording. The pytest test `test_capture_alt_screen_vs_normal_scrollback` locks this in — do not flip it without updating both the schema and the test.
-
-**No skill is shipped on purpose.** A traditional skill would carry the same content as the tool schema descriptions, plus reverse-shell / SSH / exploit recipes. The plugin's design is to keep that knowledge baked into the schemas and the design rules above; the model reads the schemas at call time. If a future use case needs a skill (a domain the schemas can't cover), add one — but check first whether the schemas can be extended instead.
-
-## Gotchas for the next agent
-
-- **The `ctx` is captured once at `register()` time** and stashed in a module global in `tmux_tools.py`. If you add a new handler, call `_ctx_or_none()` (or the helpers in `tmux_tools.py`) — `ctx` is not threaded through `**kwargs`.
-- **Don't add `pre_tool_call` or `post_tool_call` hooks** that auto-capture every `terminal()` call. That's the "tmux backend" we explicitly decided against. The model should opt in by calling `tmux_capture`.
-- **Don't add a `tmux_kill` tool** without checking with the user. Lifecycle in human hands is the point.
-- **The plugin does NOT install tmux.** It assumes tmux is on PATH. Don't try to lazy-install; the system might not be using tmux at all.
-- **Long-lived sessions hold stale tool definitions.** After editing `tmux_tools.py` or `schemas.py`, the user has to restart the TUI to reload the plugin. The smoke test exercises the on-disk code; live tool calls reflect the registered copy at session start.
-- **`__init__.py` uses relative imports with an absolute fallback — keep it that way.** The framework loader imports `__init__.py` as a namespaced package (`hermes_plugins.tmux`) where relative imports resolve, so the plugin never depends on the process's working directory or `sys.path`. Don't "simplify" this back to bare `import schemas`: an absolute import only works when the hermes process happens to start inside the plugin dir (cwd `''` on `sys.path`), which silently breaks other profiles that launch from elsewhere. This exact bug shipped — the ares profile failed with `No module named 'schemas'` while rbw loaded because rbw was launched from inside `~/src/hermes-tmux`. The absolute fallback exists only because pytest imports the root `__init__.py` as a bare module (the dir name `hermes-tmux` has a hyphen, invalid as a package name, so it can't be `tests`' parent). Both contexts are load-bearing.
-- **All four tools share one toolset (`tmux`).** They used to each register under their own toolset name (`tmux_list`, `tmux_capture`, ...). That made "enable the tmux plugin" a four-entry config change in `platform_toolsets.cli` instead of one, and entries could drift. If you ever change the toolset back, update every profile's `platform_toolsets` config to match.
-
-## Test plan
-
-The test suite is a pytest run that exercises every public handler
-against a real tmux server. The plugin is a Python package under
-the project root `__init__.py`; `pyproject.toml` adds `.` (project root) to
-pytest's `pythonpath` so the test run can import the package
-without a prior `pip install -e .`.
-
-```bash
-# Run the suite from the project root using the system pytest
-# (apt: python3-pytest) — no venv or pip install required.
-pytest tests/
+```python
+_ctx: Optional[PluginContext] = None
+def set_ctx(ctx): global _ctx; _ctx = ctx
+def _ctx_or_none():
+    global _ctx
+    return _ctx if _ctx else None
 ```
 
-The test layout, one file per tool:
+Any new handler must go through `_ctx_or_none()` (or the module helpers) —
+never assume `ctx` is in `**kwargs`.
 
-- `tests/test_tmux_list.py` — 3 tests: basic list, `include_dead` + `target` filter, no-match target.
-- `tests/test_tmux_capture.py` — 6 tests: default capture, bare session target, nonexistent target, ANSI stripping, `include_normal_scrollback` parameter, alt-screen vs normal-scrollback with vim.
-- `tests/test_tmux_send.py` — 6 tests: text mode, keys mode, `submit: false`, mutual-exclusion validation, self-pane guard, post-send capture.
-- `tests/test_tmux_wait.py` — 4 tests: pattern match, timeout, validation, `timeout: 0` clamping.
+**`session_id` *is* threaded through `kwargs`.** The framework passes the
+current session ID as `kwargs["session_id"]` when dispatching tool calls. Use
+it when a plugin needs to exclude the current conversation (e.g. a recall
+search) or otherwise key off which session is active.
 
-`tests/conftest.py` provides the per-module tmux-server fixture
-(`scope="module"`, so each test file gets its own server on a
-dedicated socket `hermes-tmux-test-<module>`) and a `FakeCtx` that
-bypasses the framework's terminal pipeline. Nineteen tests total.
-The plugin's design rule — no `tmux_kill` tool — is honored by tests:
-the dead-pane case uses an `exit` shell command under `remain-on-exit
-on`, not `tmux kill-pane`.
+## Handler contract
 
-If you do want a venv (e.g. for `pip install -e .` to make the
-package importable from anywhere on the system Python), the project
-still supports that workflow — `[project.optional-dependencies]`
-has a `dev` extra that pulls in pytest. But the canonical test
-command is just `pytest tests/`.
+Every tool handler must follow three rules (the docs' "common mistakes"):
 
-For manual checks beyond the pytest suite:
+1. **Return a JSON string — ALWAYS, even on error.** Never a bare dict.
+2. **Accept `**kwargs`.** The framework may pass extra context (task_id,
+   session_id, parent_agent); a handler without `**kwargs` breaks when it does.
+3. **Catch exceptions and return error JSON.** A propagating exception fails
+   the tool call; return `json.dumps({"error": str(e)})` instead.
 
-1. `python3 -m py_compile *.py tests/*.py` — syntax check.
-2. Run `hermes` and confirm `tmux_list` / `tmux_capture` / `tmux_send` / `tmux_wait` appear in the tool list whenever the `tmux` binary is on PATH (regardless of whether the agent is inside a tmux session).
-3. Call each tool and verify the JSON response shape matches `schemas.py`.
-4. The plugin is designed for a single local tmux server. If you genuinely need to drive a separate server, the internal per-pane resolution handles the routing automatically as long as `$TMUX` points at the right server. Multi-server driving across `tmux -L` boundaries is not a supported workflow.
+Hook callbacks should also accept `**kwargs` — Hermes inspects callback
+signatures, so a callback with `**kwargs` receives the complete additive
+payload across versions. If a callback crashes, it's logged and skipped;
+other hooks and the agent continue.
+
+## Injecting context into the conversation
+
+There are two mechanisms, with different availability:
+
+- **`ctx.inject_message(content, role="user") -> bool` — CLI-only.** It needs
+  `ctx._cli_ref`, which is populated only in an interactive CLI session. It is
+  `None` in the gateway, in non-interactive `hermes chat -q`, and in
+  kanban-spawned worker sessions — there it returns `False`. Design around
+  this: check the return value and degrade gracefully (see the Testing section
+  for the FakeCtx trap).
+- **`pre_llm_call` context injection — session-agnostic.** A `pre_llm_call`
+  hook callback may return a dict with a `"context"` key (or a plain string);
+  Hermes appends it to the current turn's *user message* (never the system
+  prompt, preserving the prompt-cache prefix) at API call time, ephemeral and
+  unpersisted. This is the stable mechanism for memory/RAG/guardrail plugins
+  that need to feed the model context every turn, and it works in every
+  process.
+
+For the stable session-agnostic surface, use `ctx.profile_name` (resolves the
+active profile from `HERMES_HOME`, no `_cli_ref`) and `ctx.dispatch_tool(...)`
+rather than reaching into `ctx._cli_ref.agent` or similar private state.
+
+## Import strategy
+
+- **Prefer package-relative imports (`from .lib import ...`, `from . import
+  schemas`) over `sys.path` mutation.** The loader imports the plugin as a
+  namespaced package where relative imports resolve, so no path trickery is
+  needed in the framework path.
+- **Do NOT `sys.path.insert(0, ...)` at import time to reach vendored code.**
+  This mutates the shared process's `sys.path` (a persistent process-wide side
+  effect) and lets *generic top-level names* — `graphql`, `output`, `http`,
+  etc. — silently collide with stdlib/third-party modules loaded later. This
+  exact antipattern shipped in one plugin and now carries a no-sys.path-
+  mutation guard in its test suite.
+- **Two legitimate exceptions** (document them at the site):
+  1. A standalone entrypoint (`python3 auth_helper.py`) that inserts the
+     plugin *root* — not a nested `lib/` — and imports the qualified path
+     (`lib.graphql.client`), never the generic leaf name.
+  2. Skill `execute_code` snippets that insert `PLUGIN_DIR` and import the
+     qualified package (`from lib import http_requests`).
+
+## Routing through the framework
+
+Route every external command through `ctx.dispatch_tool(name, args, *,
+parent_agent=None) -> str`, not a direct `subprocess` call. The return envelope
+to parse is `{"output", "exit_code", "error"}`. This keeps approval gating,
+redaction, and interrupts on every invocation. `parent_agent` resolves from the
+active CLI agent (or degrades gracefully in gateway mode); pass it explicitly
+only when you must override.
+
+Where a plugin drives a *sub-model* rather than a shell, use native function
+calling through `call_llm(tools=[...])` from `agent.auxiliary_client.py` —
+**never regex-parse tool calls out of plain text.** Structured `tool_calls`
+from the API are the contract: the loop dispatches them, feeds results back as
+`tool` role messages, and termination is "no `tool_calls` in the response."
+Regex/fence parsers break on nested braces, assume key ordering, and turn every
+model formatting quirk into a silent stall.
+
+## Plugin config and state
+
+User-visible behavior goes in plugin-relative config; runtime bookkeeping goes
+in `ctx.state`:
+
+- **`ctx.get_config(key, default=...)` / `ctx.set_config(key, value)`** —
+  resolves under `plugins.entries.<plugin-id>.settings` in `config.yaml`.
+  Global, cross-plugin, and traversal paths are rejected.
+- **`ctx.state`** — plugin-owned runtime data (cursors, caches, dedup),
+  profile-scoped, atomically replaced, ~10 MiB per plugin, stored under
+  `<HERMES_HOME>/plugin-data/`.
+
+Neither API exposes another plugin's namespace. Settings live in `config.yaml`;
+state lives under the profile home — keep the two concerns separate.
+
+## Two-layer design (async core + sync wrappers)
+
+Plugins doing network I/O (GraphQL, HTTP, WebSocket) can benefit from the
+two-layer pattern:
+
+1. `lib/graphql/<domain>.py` — async functions using raw protocol + aiohttp.
+2. `lib/<domain>.py` — sync wrappers via `sync_run()` for skill consumption.
+
+Tool handlers call the async layer directly; skill `execute_code` blocks call
+the sync wrappers. The sync wrapper must `close()` the session after each call
+— `asyncio.run()` creates a fresh event loop, so a singleton session is always
+stale.
+
+**Auth isolation.** If the plugin authenticates against a server (OAuth2,
+device flow), the agent's async context can interfere with connection
+handshakes (inherited SSL state, nested event loops). Run the auth flow in a
+standalone subprocess (`auth_helper.py`), never in the agent's event loop.
+
+## Gating tools on availability
+
+Use `check_fn` to hide tools when their dependency isn't present, rather than
+erroring at runtime. Gate on the *real condition*:
+
+- `shutil.which(binary) is not None` for a CLI dependency
+- DB/file existence for a state dependency (respect the active profile via
+  `get_hermes_home()` / `HERMES_HOME`)
+
+Don't gate on ambient session state (e.g. "inside tmux") — the agent should be
+able to drive a tool from outside the context it normally runs in. And
+`manifest.provides_tools` must agree with `check_fn`: hide tools from the list
+when they can't work, don't leave a stub that errors at call time.
+
+## Profile-aware paths
+
+Resolve Hermes's data dir via `HERMES_HOME` (if set) falling back to
+`~/.hermes/` — never hardcode a path. This is what makes the plugin work under
+any profile (`rbw`, `ares`, `default`). Use the helper from
+`hermes_constants.py` rather than re-deriving it.
+
+## Progressive tool disclosure: register, don't hide in skills
+
+Hermes uses progressive tool disclosure — non-core tools sit behind
+`tool_search` / `tool_describe` / `tool_call` and schemas load on demand. The
+old context-cost argument for burying operations inside a skill is gone.
+**Register every operation an agent performs as a tool** and put the decisions
+in the schema descriptions. A skill is warranted only for a *judgment layer*
+that doesn't fit a schema — shared-workspace conventions, when to use which
+tool, pitfalls, recipes — not as a hiding place for callable operations.
+
+## Schemas: keep the framework sanitizer in mind
+
+The framework sanitizes tool schemas. Known sharp edges:
+- **A top-level `oneOf` / `anyOf` combinator can be stripped.** Flatten the
+  schema so the sanitizer can't discard the intended shape. Add a dedicated
+  test that runs `sanitize_tool_schemas` over every schema and asserts
+  `properties`/`required` survive with no top-level combinators.
+- Descriptions are the documentation the model reads at call time. Bake the
+  tricky behavior (flag defaults, failure modes, follow-up expectations) into
+  the schema text rather than a separate skill.
+
+## Security principles for plugin tools
+
+- **Lifecycle stays in human hands.** Don't ship a teardown tool that lets the
+  agent destroy its own observability mid-session. If teardown is needed, the
+  agent can do it via `terminal` — don't pin it as a tool.
+- **Guard against injection.** Validate free-form input before it reaches the
+  underlying CLI. A leading `-` on a value that should be a bare token can be
+  interpreted as a flag (tmux key names, shell args). Reject it with a message
+  that names the correct form.
+- **Protect the agent's own input.** If the tool targets a pane/stream the
+  agent itself drives, refuse to send into the agent's own one — a stale or
+  resolved-by-name target could land keystrokes in the agent's own input.
+- **No automatic capture hooks.** Don't add `pre_tool_call`/`post_tool_call`
+  hooks that observe every terminal call unless the user explicitly asks. The
+  model should opt in by calling the tool, not have observability forced on it.
+- **Make destructive operations opt-in.** If a tool modifies state the user is
+  watching, bias the default toward the non-destructive path and expose the
+  destructive one explicitly.
+
+## Testing plugins
+
+- **Prefer a real pytest suite against the actual dependency** (a live server,
+  a real tmux session on an isolated socket) over mocks of the CLI. Mocks
+  verify the happy path; they silently pass when the *contract* with the
+  framework changes.
+- **`FakeCtx` must model the real framework's return *envelope* exactly, and
+  must not unconditionally succeed where the real framework can fail.** If a
+  method returns `False` in some real mode (e.g. `inject_message` in the
+  TUI/gateway), add a test that exercises that failure path — otherwise the
+  suite masks it. This is the single most common blind spot: a FakeCtx that
+  always returns `True` passes while the real path is broken.
+- **Test the framework contract, not just the happy path.** Include a loader
+  test (registrations, no sys.path mutation, sync-wrapper imports) and a schema
+  sanitizer test (no top-level combinators, `properties`/`required` intact).
+  These are the two failure classes that have bitten real plugins.
+- Stand up an isolated server per test module on a dedicated socket so tests
+  never touch a real session, and tear it down in a fixture `finally`.
+- If a handler runs a sub-model loop, unit-test the loop's *control flow* with
+  a mocked `call_llm` (tool-then-answer, immediate answer, max-iterations
+  synthesis, unknown-tool rejection, malformed args, multiple calls per turn),
+  and have a separate integration harness for the real end-to-end path.
+- **Validate loading before writing tests**: `hermes plugins doctor . --ci`
+  runs the same discovery, manifest parse, namespaced import, `register()`,
+  hook registry, and tool registry Hermes uses, and exits non-zero on error
+  (reports invalid hook names, callbacks without `**kwargs`, and drift between
+  declared and registered tools/hooks). For a plugin that isn't appearing at
+  all, set `HERMES_PLUGINS_DEBUG=1` for verbose discovery logs, or tail
+  `~/.hermes/logs/agent.log`.
+
+## General coding best practices
+
+- **Compose, don't construct.** Small functions that do one thing well,
+  connected cleanly. Every handler should be understandable on its own.
+- **Read before you write.** Understand the full context — the file, its
+  callers, its tests, the commit that introduced it — before changing anything.
+  Trace a symbol to its definition and usages rather than guessing its shape.
+- **Make the smallest change that solves the problem.** Don't refactor what you
+  don't need, don't add what isn't asked for, don't decorate.
+- **Test before you assume.** If you're not certain how something behaves, write
+  a test and find out. Assumptions are expensive; verification is cheap.
+- **Think in systems.** A change ripples to callers, tests, deployments, and the
+  next reader. Follow the thread before you pull it.
+- **Respect the machine.** Understand what the code actually does at the level
+  it runs. Profile before optimizing; measure before claiming.
+- **Fix root causes, not symptoms.** When you find a bug, check sibling call
+  paths for the same flaw and fix the class, not just the reported site.
+- **Be honest about what you don't know.** Say "I don't know" rather than guess
+  confidently. A wrong answer wastes more time than an honest gap.
+
+## Distinction this file depends on
+
+**AGENTS.md dictates behavior; DESIGN.md records the project's rationale.**
+If a rule gates what the agent must or must not do, it belongs in this file (or
+in the tool schemas). If it explains *why* a decision was made — a measured
+behavior against a live system, a reverted alternative, a historical bug — it
+belongs in `DESIGN.md`. Rationale in AGENTS.md makes every rationale edit an
+edit to a protected instruction file; keeping the two separate is the point.
