@@ -16,8 +16,20 @@ import logging
 import os
 import shutil
 
-import schemas
-import tmux_tools
+# The framework plugin loader imports this file as a namespaced package
+# (``hermes_plugins.tmux``) with ``__package__`` set, so relative imports
+# resolve. But pytest imports the root ``__init__.py`` as a bare module
+# (the project dir name contains a hyphen, invalid as a package name, so
+# it can't be the parent of the ``tests`` package). That bare-module
+# context has no parent package, so ``from . import`` fails. The
+# try/except covers both: relative for the loader, absolute fallback
+# (project root on sys.path) for pytest.
+try:
+    from . import schemas
+    from . import tmux_tools
+except ImportError:
+    import schemas
+    import tmux_tools
 
 logger = logging.getLogger(__name__)
 
