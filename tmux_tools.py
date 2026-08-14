@@ -396,8 +396,7 @@ def _envelope_with_post_send_capture(
     the agent doesn't need.
 
     No schema change: the response shape is opaque to the schema
-    (oneOf describes the *args* shape, not the response). Documented
-    in AGENTS.md alongside the tmux_wait 5-line hint.
+    (the flat schema describes the *args* shape, not the response).
     """
     time.sleep(_POST_SEND_TAIL_S)
     text = _capture_text(pane_id, socket, _POST_SEND_LINES,
@@ -414,11 +413,12 @@ def _envelope_with_post_send_capture(
 # ---------------------------------------------------------------------------
 # tmux_send
 #
-# The schema is a ``oneOf`` with two branches:
+# The schema is a flat object with two mutually exclusive modes, enforced
+# by the handler (not the schema — the framework strips top-level oneOf):
 #   - typing mode:    ``text="..."``        (optionally ``submit: false``)
 #   - keystroke mode: ``keys=["C-c", ...]`` (no submit; include "Enter" in list)
 #
-# The branches are disjoint by parameter name, so an agent that wants
+# The modes are disjoint by parameter name, so an agent that wants
 # a keystroke can't accidentally leave a submit flag set: ``keys``
 # simply doesn't have one. An agent that wants to type a command
 # can't accidentally send a key-name list: ``text`` is a string.

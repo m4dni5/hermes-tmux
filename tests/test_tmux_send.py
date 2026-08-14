@@ -4,7 +4,7 @@ Six cases from the original smoke test:
   - text mode (default submit=true) types characters and presses Enter
   - keys mode sends tmux key names like ``C-c``
   - text mode with ``submit: false`` types without submitting
-  - oneOf validation rejects bad-shape calls
+  - flat-schema validation rejects bad-shape calls
   - self-pane guard refuses to target the agent's own pane
   - post-send capture returns a 5-line snapshot on success
 """
@@ -66,7 +66,7 @@ def test_send_text_submit_false(sock: str) -> None:
 
 
 def test_send_validation_rejects_bad_shape(sock: str) -> None:
-    """The ``oneOf`` schema rejects: missing body, both text+keys, empty keys, non-list keys."""
+    """The flat schema / handler rejects: missing body, both text+keys, empty keys, non-list keys."""
     cases = [
         ({"pane": "%0"}, "pass either"),
         ({"pane": "%0", "text": "x", "keys": ["C-c"]}, "not both"),

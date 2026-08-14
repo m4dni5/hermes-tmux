@@ -84,7 +84,7 @@ The test layout, one file per tool:
 
 - `tests/test_tmux_list.py` — 3 tests: basic list, `include_dead` + `target` filter, no-match target.
 - `tests/test_tmux_capture.py` — 6 tests: default capture, bare session target, nonexistent target, ANSI stripping, `include_normal_scrollback` parameter, alt-screen vs normal-scrollback with vim.
-- `tests/test_tmux_send.py` — 6 tests: text mode, keys mode, `submit: false`, `oneOf` validation, self-pane guard, post-send capture.
+- `tests/test_tmux_send.py` — 6 tests: text mode, keys mode, `submit: false`, mutual-exclusion validation, self-pane guard, post-send capture.
 - `tests/test_tmux_wait.py` — 4 tests: pattern match, timeout, validation, `timeout: 0` clamping.
 
 `tests/conftest.py` provides the per-module tmux-server fixture

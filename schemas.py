@@ -80,70 +80,54 @@ TMUX_SEND_SCHEMA = {
         "Send text or keystrokes to a tmux pane. Use this instead of "
         "calling `terminal('tmux send-keys ...')` directly — the flag "
         "choices are handled here. Returns a 5-line post-send snapshot "
-        "of the pane; call `tmux_capture` for the full scrollback."
+        "of the pane; call `tmux_capture` for the full scrollback. "
+        "Two mutually exclusive modes: pass `text` (typing mode) to "
+        "type a command, or `keys` (keystroke mode) to send tmux key "
+        "names. Pass exactly one."
     ),
     "parameters": {
-        "oneOf": [
-            {
-                "type": "object",
-                "description": "Typing mode: send `text` as literal characters.",
-                "properties": {
-                    "pane": {
-                        "type": "string",
-                        "description": (
-                            "Pane to send to. Accepts `%pane_id` or any "
-                            "tmux target format."
-                        ),
-                    },
-                    "text": {
-                        "type": "string",
-                        "description": (
-                            "Text to type character-by-character. By "
-                            "default Enter is pressed after — set "
-                            "`submit: false` to build up a command "
-                            "interactively."
-                        ),
-                    },
-                    "submit": {
-                        "type": "boolean",
-                        "description": (
-                            "Press Enter after typing. Default true. "
-                            "Set false to leave the text in the input "
-                            "buffer without submitting it."
-                        ),
-                        "default": True,
-                    },
-                },
-                "required": ["pane", "text"],
-                "additionalProperties": False,
+        "type": "object",
+        "properties": {
+            "pane": {
+                "type": "string",
+                "description": (
+                    "Pane to send to. Accepts `%pane_id` or any tmux "
+                    "target format."
+                ),
             },
-            {
-                "type": "object",
-                "description": "Keystroke mode: send a sequence of tmux key names.",
-                "properties": {
-                    "pane": {
-                        "type": "string",
-                        "description": (
-                            "Pane to send to. Accepts `%pane_id` or any "
-                            "tmux target format."
-                        ),
-                    },
-                    "keys": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "minItems": 1,
-                        "description": (
-                            "Tmux key names as a list, e.g. `\"C-c\"` for "
-                            "Ctrl+C, `\"BSpace\"` for backspace, `\"Enter\"` "
-                            "to submit. Trailing Enter is not implied — "
-                            "include it explicitly."
-                        ),
-                    },
-                },
-                "required": ["pane", "keys"],
-                "additionalProperties": False,
+            "text": {
+                "type": "string",
+                "description": (
+                    "Typing mode. Text to type character-by-character. "
+                    "By default Enter is pressed after — set `submit: "
+                    "false` to build up a command interactively. "
+                    "Mutually exclusive with `keys`."
+                ),
             },
-        ],
+            "submit": {
+                "type": "boolean",
+                "description": (
+                    "Press Enter after typing. Default true. Set false "
+                    "to leave the text in the input buffer without "
+                    "submitting it. Only used in typing mode."
+                ),
+                "default": True,
+            },
+            "keys": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "description": (
+                    "Keystroke mode. Tmux key names as a list, e.g. "
+                    "`\"C-c\"` for Ctrl+C, `\"BSpace\"` for backspace, "
+                    "`\"Enter\"` to submit. Trailing Enter is not "
+                    "implied — include it explicitly. Mutually "
+                    "exclusive with `text`."
+                ),
+            },
+        },
+        "required": ["pane"],
+        "additionalProperties": False,
     },
 }
 
