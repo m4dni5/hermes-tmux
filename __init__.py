@@ -91,10 +91,10 @@ def _capture_self_socket() -> str | None:
 
 
 _TOOLS = (
-    ("tmux_list",    "tmux_list",    schemas.TMUX_LIST_SCHEMA,    tmux_tools.tmux_list_handler,    "📋"),
-    ("tmux_capture", "tmux_capture", schemas.TMUX_CAPTURE_SCHEMA, tmux_tools.tmux_capture_handler, "📜"),
-    ("tmux_send",    "tmux_send",    schemas.TMUX_SEND_SCHEMA,    tmux_tools.tmux_send_handler,    "⌨️"),
-    ("tmux_wait",    "tmux_wait",    schemas.TMUX_WAIT_SCHEMA,    tmux_tools.tmux_wait_handler,    "⏳"),
+    ("tmux_list",    "tmux", schemas.TMUX_LIST_SCHEMA,    tmux_tools.tmux_list_handler,    "📋"),
+    ("tmux_capture", "tmux", schemas.TMUX_CAPTURE_SCHEMA, tmux_tools.tmux_capture_handler, "📜"),
+    ("tmux_send",    "tmux", schemas.TMUX_SEND_SCHEMA,    tmux_tools.tmux_send_handler,    "⌨️"),
+    ("tmux_wait",    "tmux", schemas.TMUX_WAIT_SCHEMA,    tmux_tools.tmux_wait_handler,    "⏳"),
 )
 
 
