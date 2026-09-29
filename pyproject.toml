@@ -1,3 +1,16 @@
+[project]
+name = "hermes-tmux"
+version = "0.4.0"
+description = "Tmux pane observability for Hermes Agent — list, capture, send, wait"
+requires-python = ">=3.11"
+
+# Directory plugin, not a pip package: the Hermes loader imports this folder
+# in place, so there is nothing to build. PM still includes plugin pyprojects
+# as uv workspace members, which requires a [project] table; keep it
+# metadata-only (no build backend) so uv never tries to build it.
+[tool.uv]
+package = false
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
